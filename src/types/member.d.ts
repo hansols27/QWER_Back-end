@@ -22,6 +22,7 @@ export interface Member {
   nameStyle?: React.CSSProperties;
   contents: MemberContentItem[];
   sns?: MemberSNS;
+  type: string;
 }
 
 // ✅ 프론트에서 사용할 상태 타입 (File 허용)
@@ -33,8 +34,10 @@ export type MemberState = {
 
 // ✅ API 전송용 타입 (File ❌, string만 허용)
 export type MemberPayload = {
-  id: string;
-  name: string;
-  contents: { type: "text" | "image"; content: string }[];
-  sns: MemberSNS;
+    id: string;
+    name: string;
+    tracks: string[]; 
+    contents: { type: "text" | "image"; content: string }[];
+    sns: MemberSNS;
+    type: string;
 };
