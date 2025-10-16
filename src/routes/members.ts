@@ -1,10 +1,7 @@
-// src/routes/members.ts (최종 수정 버전)
-
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
-// ⭐️ 타입 이름 변경: MemberContent -> MemberContentItem
-import type { MemberPayload, MemberContentItem } from "@/types/member"; 
+import type { MemberPayload, MemberContentItem } from "@/types/member";
 import { ResultSetHeader } from 'mysql2/promise';
 
 // ⭐️ MariaDB 연결 풀 임포트
@@ -23,6 +20,32 @@ const getErrorMessage = (err: unknown): string => {
     if (typeof err === 'string') return err;
     return "알 수 없는 오류가 발생했습니다.";
 };
+
+// ----------------------------------------------------
+// GET /api/members (멤버 프로필 목록 조회 - DB 연결 테스트용)
+// ----------------------------------------------------
+router.get("/", async (req: Request, res: Response) => {
+    try {
+        // ⭐️ DB 연결 및 쿼리 테스트 ⭐️
+        // members 테이블이 존재하는지 확인하고, 최대 10개의 멤버만 조회합니다.
+        const [rows] = await pool.execute(`SELECT id, name, type FROM ${TABLE_NAME} LIMIT 10`);
+        
+        // 성공 응답: 데이터가 비어있어도 DB 연결 및 쿼리는 성공한 것임
+        res.status(200).json({ 
+            success: true, 
+            message: "Member list retrieved successfully. DB connection verified.",
+            data: rows 
+        });
+
+    } catch (err) {
+        // DB 연결 오류, SQL 구문 오류 등이 발생했을 때
+        console.error("GET /members 쿼리 실행 오류:", err);
+        res.status(500).json({ 
+            success: false, 
+            message: `Failed to retrieve members: ${getErrorMessage(err)}` 
+        });
+    }
+});
 
 // ----------------------------------------------------
 // POST /api/members (프로필 생성/업데이트)
@@ -61,7 +84,6 @@ router.post("/", upload.array("images"), async (req: Request, res: Response) => 
         }
 
         // 🔹 2. contents 이미지 URL 매핑
-        // ⭐️ 타입 이름 변경 적용: MemberContentItem
         const contentsWithImages: MemberContentItem[] = data.contents.map((c) =>
             c.type === "image" ? { ...c, content: uploadedImages.shift() || c.content || "" } : c
         );
