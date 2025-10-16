@@ -8,9 +8,7 @@ import { s3, AWS_S3_BUCKET_NAME } from "../config/aws-s3";
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import type { AlbumItem } from "@/types/album";
 import { v4 as uuidv4 } from "uuid";
-// import { RowDataPacket, ResultSetHeader } from 'mysql2/promise'; // 🚨 기존 오류: RowDataPacket은 위에 임포트됨
 import type { Express } from 'express'; 
-// Note: fs import is no longer needed since we use S3 buffer upload/delete
 
 const TABLE_NAME = "albums"; // MariaDB 테이블 이름
 
@@ -40,7 +38,7 @@ const mapRowToAlbumItem = (row: AlbumRow): AlbumItem => ({
  */
 export async function getAlbums(): Promise<AlbumItem[]> {
     const [rows] = await pool.execute<AlbumRow[]>(
-        // ⭐️ 'date' 대신 'release_date'로 정렬합니다 ⭐️
+        // 🚨 최종 수정: 'date'를 'release_date'로 변경합니다.
         `SELECT * FROM ${TABLE_NAME} ORDER BY release_date DESC`
     );
     return rows.map(mapRowToAlbumItem);
