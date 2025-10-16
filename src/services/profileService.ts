@@ -3,9 +3,10 @@ import pool from "../config/db-config";
 // ⭐️ AWS S3 버퍼 업로드 함수 임포트 (경로 확인)
 import { uploadBufferToStorage } from '../utils/aws-s3-upload'; 
 
-import { MemberPayload, MemberState } from '@/types/member';
+// ⭐️ MemberContentPayloadItem 추가 임포트
+import { MemberPayload, MemberState, MemberContentPayloadItem, MemberSNS } from '@/types/member';
 import type { Express } from 'express';
-import { RowDataPacket } from 'mysql2/promise';
+import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 
 const TABLE_NAME = "profiles"; // MariaDB 테이블 이름
 
@@ -43,10 +44,13 @@ export const saveProfile = async (
         }
     }
 
-    // 🔹 2. MemberPayload로 변환 (로직은 동일하게 유지)
+    // 🔹 2. MemberPayload로 변환
     const payload: MemberPayload = {
         id,
         name,
+        // 누락 필드 추가
+        tracks: data.tracks, 
+        type: data.type, 
         contents: [
             ...data.text.map(t => ({ type: 'text' as const, content: t })),
             // 기존 이미지 URL을 사용하거나, 새로 업로드된 이미지 URL을 사용
@@ -54,7 +58,7 @@ export const saveProfile = async (
                 type: 'image' as const,
                 content: typeof img === 'string' ? img : imageUrls[i] ?? ''
             }))
-        ],
+        ] as MemberContentPayloadItem[], // ⭐️ MemberContentPayloadItem[]으로 타입 단언 수정
         sns: data.sns ?? {}
     };
     
@@ -62,11 +66,11 @@ export const saveProfile = async (
     const payloadJsonString = JSON.stringify(payload);
 
     // INSERT...ON DUPLICATE KEY UPDATE를 사용하여, ID가 이미 존재하면 업데이트합니다.
-    await pool.execute(
-        `INSERT INTO ${TABLE_NAME} (id, name, data) 
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE name = VALUES(name), data = VALUES(data)`,
-        [id, name, payloadJsonString]
+    await pool.execute<ResultSetHeader>(
+        `INSERT INTO ${TABLE_NAME} (id, name, type, data) 
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE name = VALUES(name), type = VALUES(type), data = VALUES(data)`,
+        [id, name, data.type, payloadJsonString]
     );
 
     return { contentsUrls: imageUrls };
@@ -88,8 +92,3 @@ export const getProfileById = async (id: string): Promise<MemberPayload | null> 
     // JSON 문자열을 객체로 파싱하여 반환
     return JSON.parse(rows[0].data as string) as MemberPayload;
 };
-
-// ----------------------------------------------------
-// ⚠️ 주의: 이전 Firebase 관련 코드는 모두 제거되었습니다.
-// import { db } from '../firebaseConfig'; 등의 코드는 제거해야 합니다.
-// ----------------------------------------------------
