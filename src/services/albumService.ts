@@ -1,154 +1,215 @@
-import { Pool, ResultSetHeader } from "mysql2/promise";
+import { Pool, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import pool from "../config/db-config";
-// ⭐️ AlbumItem 인터페이스를 사용합니다 ⭐️
-import { AlbumItem } from "@/types/album"; 
-import { v4 as uuidv4 } from "uuid";
-// ⭐️ 파일 경로 및 이름이 다르다면 여기를 수정하세요 ⭐️
-// 임시로 S3 유틸리티 함수를 인라인으로 처리하거나 사용하지 않도록 주석 처리합니다.
-// import { uploadBufferToStorage } from "../utils/aws-s3-upload";
-// import { deleteFileFromStorage } from "../utils/aws-s3-delete";
+// ⭐️ AWS S3 버퍼 업로드 및 설정 파일 임포트
+import { uploadBufferToStorage } from "../utils/aws-s3-upload";
+import { s3, AWS_S3_BUCKET_NAME } from "../config/aws-s3"; 
 
-// ⭐️ Payload 대신 AlbumRequestData를 사용합니다 ⭐️
-interface AlbumRequestData {
-  title: string;
-  date: string; // 클라이언트 요청에는 'date' 필드가 여전히 남아있을 수 있습니다.
-  image: string;
-  description?: string;
-  tracks?: string[];
-  videoUrl?: string;
-  // S3 업로드 시 cover_image_url 대신 image 필드를 사용한다고 가정
-  cover_image_url?: string; 
-  release_date?: string; // DB에 저장할 때 사용할 필드
+// AWS SDK S3 삭제 명령어 임포트
+import { DeleteObjectCommand } from '@aws-sdk/client-s3';
+import type { AlbumItem } from "@/types/album";
+import { v4 as uuidv4 } from "uuid";
+// import { RowDataPacket, ResultSetHeader } from 'mysql2/promise'; // 🚨 기존 오류: RowDataPacket은 위에 임포트됨
+import type { Express } from 'express'; 
+// Note: fs import is no longer needed since we use S3 buffer upload/delete
+
+const TABLE_NAME = "albums"; // MariaDB 테이블 이름
+
+// DB에서 반환될 로우 타입 정의 (id는 숫자형, tracks는 JSON 문자열로 가정)
+// ⭐️ DB 필드명: 'date' 대신 'release_date'를 사용한다고 가정합니다. ⭐️
+interface AlbumRow extends Omit<AlbumItem, 'id' | 'tracks' | 'date'>, RowDataPacket {
+    id: number; // DB의 Primary Key
+    tracks: string; // JSON 문자열
+    release_date: string; // DB의 실제 날짜 필드명
 }
 
-
-// S3 Mock Functions (실제 S3 유틸리티 파일이 없을 경우 임시로 사용)
-// 사용자님의 실제 S3 유틸리티 코드로 대체해야 합니다.
-const uploadBufferToStorage = async (buffer: Buffer, destPath: string, mimeType: string): Promise<string> => {
-    // 실제 S3 업로드 로직
-    return `https://s3.ap-northeast-2.amazonaws.com/qwerfansite/${destPath}`;
-};
-const deleteFileFromStorage = async (url: string): Promise<void> => {
-    // 실제 S3 삭제 로직
-};
-
-
-const TABLE_NAME = "albums";
-
-// 헬퍼 함수: 오류 메시지 추출
-const getErrorMessage = (err: unknown): string => {
-    if (err instanceof Error) return err.message;
-    if (typeof err === 'string') return err;
-    return "An unknown error occurred.";
-};
+// 헬퍼 함수: DB Row를 AlbumItem 타입으로 변환 (숫자 ID -> 문자열, JSON -> 객체)
+const mapRowToAlbumItem = (row: AlbumRow): AlbumItem => ({
+    // ⭐️ DB의 release_date 필드를 AlbumItem의 date 필드로 매핑합니다. ⭐️
+    ...row,
+    id: String(row.id),
+    date: row.release_date, 
+    tracks: JSON.parse(row.tracks || '[]'),
+});
 
 // ----------------------------------------------------
-// [GET] 앨범 목록 조회
+// DB 쿼리 실행 함수들
 // ----------------------------------------------------
-export const getAlbums = async (): Promise<AlbumItem[]> => {
-    try {
-        // ⭐️ 'date' 대신 DB 스키마에 정의된 'release_date'로 정렬합니다 ⭐️
-        const [rows] = await pool.execute(`SELECT * FROM ${TABLE_NAME} ORDER BY release_date DESC`);
-        return rows as AlbumItem[];
-    } catch (err) {
-        console.error("Error retrieving albums:", err);
-        throw new Error(`앨범 조회 실패: ${getErrorMessage(err)}`);
+
+/**
+ * 전체 앨범 조회
+ */
+export async function getAlbums(): Promise<AlbumItem[]> {
+    const [rows] = await pool.execute<AlbumRow[]>(
+        // ⭐️ 'date' 대신 'release_date'로 정렬합니다 ⭐️
+        `SELECT * FROM ${TABLE_NAME} ORDER BY release_date DESC`
+    );
+    return rows.map(mapRowToAlbumItem);
+}
+
+/**
+ * 단일 앨범 조회
+ */
+export async function getAlbumById(id: string): Promise<AlbumItem | null> {
+    const [rows] = await pool.execute<AlbumRow[]>(
+        `SELECT * FROM ${TABLE_NAME} WHERE id = ?`,
+        [id]
+    );
+    if (rows.length === 0) return null;
+    return mapRowToAlbumItem(rows[0]);
+}
+
+/**
+ * 앨범 생성
+ */
+export async function createAlbum(
+    data: Partial<AlbumItem>,
+    file?: Express.Multer.File
+): Promise<AlbumItem> {
+    if (!data.title || !data.date) throw new Error("Title and date are required");
+
+    let imageUrl = "";
+    if (file) {
+        // AWS S3에 커버 이미지 업로드
+        const fileUUID = uuidv4();
+        const mimeTypeExtension = file.mimetype.split('/').pop() || 'png';
+        const destPath = `albums/${fileUUID}.${mimeTypeExtension}`;
+        imageUrl = await uploadBufferToStorage(file.buffer, destPath, file.mimetype);
     }
-};
 
-// ----------------------------------------------------
-// [GET] 단일 앨범 조회
-// ----------------------------------------------------
-export const getAlbumById = async (id: number): Promise<AlbumItem | undefined> => {
-    try {
-        const [rows] = await pool.execute(`SELECT * FROM ${TABLE_NAME} WHERE id = ?`, [id]);
-        const albums = rows as AlbumItem[];
-        return albums.length > 0 ? albums[0] : undefined;
-    } catch (err) {
-        console.error(`Error retrieving album ${id}:`, err);
-        throw new Error(`단일 앨범 조회 실패: ${getErrorMessage(err)}`);
-    }
-};
+    const albumData: Omit<AlbumItem, "id"> = {
+        title: data.title,
+        date: data.date,
+        description: data.description || "",
+        tracks: data.tracks || [],
+        videoUrl: data.videoUrl || "",
+        image: imageUrl,
+    };
+    
+    // JSON 직렬화
+    const tracksJson = JSON.stringify(albumData.tracks);
 
-// ----------------------------------------------------
-// [POST] 앨범 생성
-// ----------------------------------------------------
-export const createAlbum = async (
-    data: AlbumRequestData,
-    imageFile?: Express.Multer.File
-): Promise<AlbumItem> => {
-    let imageUrl: string | undefined;
+    // ⭐️ 쿼리에서 'date' 대신 'release_date' 필드를 사용합니다 ⭐️
+    const [result] = await pool.execute<ResultSetHeader>(
+        `INSERT INTO ${TABLE_NAME} (title, release_date, description, tracks, videoUrl, image) 
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [albumData.title, albumData.date, albumData.description, tracksJson, albumData.videoUrl, albumData.image]
+    );
 
-    // 클라이언트의 'date' 필드를 DB의 'release_date'로 매핑
-    const releaseDate = data.date || data.release_date;
-    const albumTitle = data.title;
-    const albumDescription = data.description || null;
-    const tracklistJson = data.tracks ? JSON.stringify(data.tracks) : null;
-    const videoUrl = data.videoUrl || null;
+    const newId = String(result.insertId);
+    return { ...albumData, id: newId };
+}
 
-    try {
-        // 1. S3 이미지 업로드 (선택 사항)
-        if (imageFile) {
-            const mimeTypeExtension = imageFile.mimetype.split('/').pop() || 'png';
-            const destPath = `albums/${uuidv4()}.${mimeTypeExtension}`;
-            // ⭐️ S3 유틸리티 코드를 반드시 확인하고 사용하세요 ⭐️
-            // 지금은 Mock 함수를 사용하거나 실제 코드로 대체해야 합니다.
-            imageUrl = await uploadBufferToStorage(imageFile.buffer, destPath, imageFile.mimetype);
-        }
+/**
+ * 앨범 수정
+ */
+export async function updateAlbum(
+    id: string,
+    data: Partial<AlbumItem>,
+    file?: Express.Multer.File
+): Promise<AlbumItem | null> {
+    // 1. 기존 데이터 조회
+    const existingAlbum = await getAlbumById(id);
+    if (!existingAlbum) return null;
 
-        // 2. DB에 삽입 (cover_image_url과 release_date 사용)
-        const query = `
-            INSERT INTO ${TABLE_NAME} (title, release_date, cover_image_url, description, tracks, videoUrl)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `;
-        const [result] = await pool.execute<ResultSetHeader>(query, [
-            albumTitle,
-            releaseDate,
-            imageUrl || data.image || null, // 파일 업로드 또는 기본 URL 사용
-            albumDescription,
-            tracklistJson,
-            videoUrl
-        ]);
-
-        const newId = result.insertId;
-        
-        // 3. 삽입된 앨범 데이터 반환
-        const newAlbum = await getAlbumById(newId);
-        if (!newAlbum) {
-             throw new Error("앨범 생성 후 데이터를 찾을 수 없습니다.");
-        }
-        return newAlbum;
-
-    } catch (err) {
-        console.error("Error creating album:", err);
-        // 오류 발생 시 업로드된 이미지 롤백 (선택 사항이지만 안전함)
+    let imageUrl = existingAlbum.image || "";
+    
+    // 2. 이미지 처리
+    if (file) {
+        // 기존 S3 이미지 삭제
         if (imageUrl) {
-             deleteFileFromStorage(imageUrl).catch(e => console.error("Failed to rollback S3 upload:", e));
+            await deleteS3File(imageUrl).catch(err => console.error("Old S3 deletion failed:", err));
         }
-        throw new Error(`앨범 생성 실패: ${getErrorMessage(err)}`);
+
+        // 새 이미지 업로드
+        const fileUUID = uuidv4();
+        const mimeTypeExtension = file.mimetype.split('/').pop() || 'png';
+        const destPath = `albums/${fileUUID}.${mimeTypeExtension}`;
+        imageUrl = await uploadBufferToStorage(file.buffer, destPath, file.mimetype);
     }
-};
 
-// ... [PUT] updateAlbum 및 [DELETE] deleteAlbum 함수도 유사한 방식으로 수정해야 하지만,
-// 현재는 GET 요청의 DB 안정화가 최우선이므로 GET 부분만 집중적으로 수정했습니다.
-// 전체 코드는 GET 요청을 안정화한 후 필요 시 다시 제공하겠습니다.
+    // 3. 업데이트할 데이터 준비
+    const updateFields: { [key: string]: any } = {};
+    const keysToUpdate = Object.keys(data).filter(key => key !== 'id');
+
+    for (const key of keysToUpdate) {
+        const value = data[key as keyof Partial<AlbumItem>];
+        // ⭐️ 'date' 필드가 있다면 'release_date'로 매핑하여 DB에 전달합니다. ⭐️
+        const dbKey = key === 'date' ? 'release_date' : key;
+        
+        if (key === 'tracks') {
+            updateFields[dbKey] = JSON.stringify(value); // tracks는 JSON으로 직렬화
+        } else {
+            updateFields[dbKey] = value;
+        }
+    }
+    updateFields.image = imageUrl; // 최종 이미지 URL 포함
+
+    // SET 구문 생성
+    const setClauses = Object.keys(updateFields).map(key => `${key} = ?`).join(', ');
+    const values = Object.values(updateFields);
+
+    // 4. MariaDB 업데이트
+    await pool.execute(
+        `UPDATE ${TABLE_NAME} SET ${setClauses} WHERE id = ?`,
+        [...values, id]
+    );
+    
+    // 5. 업데이트된 데이터 조회 및 반환
+    return getAlbumById(id);
+}
+
+/**
+ * 앨범 삭제
+ */
+export async function deleteAlbum(id: string): Promise<void> {
+    const album = await getAlbumById(id);
+    if (!album) return;
+
+    // 1. S3 이미지 삭제
+    if (album.image) {
+        await deleteS3File(album.image).catch(err => console.error("S3 deletion failed:", err));
+    }
+
+    // 2. MariaDB 데이터 삭제
+    await pool.execute(
+        `DELETE FROM ${TABLE_NAME} WHERE id = ?`,
+        [id]
+    );
+}
 
 // ----------------------------------------------------
-// [PUT] 앨범 수정 (임시 스텁)
+// 내부 헬퍼 함수
 // ----------------------------------------------------
-export const updateAlbum = async (
-    id: number,
-    data: Partial<AlbumRequestData>,
-    imageFile?: Express.Multer.File
-): Promise<AlbumItem> => {
-     // 현재는 GET 요청 안정화에 집중
-     throw new Error("Update functionality is temporarily suspended.");
-};
 
-// ----------------------------------------------------
-// [DELETE] 앨범 삭제 (임시 스텁)
-// ----------------------------------------------------
-export const deleteAlbum = async (id: number): Promise<void> => {
-     // 현재는 GET 요청 안정화에 집중
-     throw new Error("Delete functionality is temporarily suspended.");
-};
+/**
+ * AWS S3 파일 삭제 헬퍼
+ */
+async function deleteS3File(fileUrl: string): Promise<void> {
+    if (!fileUrl) return;
+
+    // ⭐️ 1. filePath를 try 블록 밖에서 미리 선언합니다.
+    let filePath: string; 
+
+    try {
+        const urlObj = new URL(fileUrl);
+        // const region = s3.config.region; // 이 줄은 S3 객체에 region이 없을 수 있어 제거
+        
+        // keyMatch를 찾는 로직은 S3 URL 구조에 따라 다릅니다. 이 코드가 정상 작동한다고 가정합니다.
+        const keyMatch = fileUrl.match(new RegExp(`/${AWS_S3_BUCKET_NAME}/(.*)`));
+        
+        // ⭐️ 2. 선언된 filePath에 값을 할당합니다. (let 선언은 이미 외부에서 처리됨)
+        filePath = keyMatch ? keyMatch[1] : urlObj.pathname.substring(1); 
+        
+        filePath = decodeURIComponent(filePath);
+
+        const deleteParams = {
+            Bucket: AWS_S3_BUCKET_NAME,
+            Key: filePath, 
+        };
+
+        await s3.send(new DeleteObjectCommand(deleteParams));
+    } catch (err) {
+        const error = err instanceof Error ? err : new Error("An unknown S3 error occurred");
+        throw new Error(`Failed to delete S3 file: ${error.message}`);
+    }
+}
