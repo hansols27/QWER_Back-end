@@ -9,7 +9,7 @@ dotenv.config();
 // ----------------------------------------------------
 
 export const AWS_REGION = process.env.AWS_REGION || 'ap-northeast-2';
-export const AWS_S3_BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME || 'your-s3-bucket-name';
+export const AWS_S3_BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME || 'qwerfansite';
 
 // S3Client 초기화 
 // 🚨 credentials를 명시하지 않으면, EC2 인스턴스의 IAM Role을 자동으로 사용합니다.
