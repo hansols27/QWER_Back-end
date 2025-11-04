@@ -8,9 +8,8 @@ import { uploadBufferToStorage } from "../utils/aws-s3-upload";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
-const TABLE_NAME = "settings";
+const TABLE_NAME = "members";
 
-// 헬퍼: 오류 메시지 추출
 const getErrorMessage = (err: unknown): string => {
     if (err instanceof Error) return err.message;
     if (typeof err === 'string') return err;
@@ -18,50 +17,51 @@ const getErrorMessage = (err: unknown): string => {
 };
 
 // ----------------------------------------------------
-// GET /api/members (최신 10개 조회, 테스트용)
+// GET /api/members (최신 10명 조회)
 // ----------------------------------------------------
 router.get("/", async (_req: Request, res: Response) => {
     try {
-        const [rows] = await pool.execute(`SELECT * FROM ${TABLE_NAME} LIMIT 10`);
+        const [rows] = await pool.execute(`SELECT * FROM ${TABLE_NAME} ORDER BY created_at DESC LIMIT 10`);
         res.status(200).json({ success: true, data: rows });
     } catch (err) {
-        console.error("GET /members 쿼리 오류:", err);
+        console.error("GET /members 오류:", err);
         res.status(500).json({ success: false, message: getErrorMessage(err) });
     }
 });
 
 // ----------------------------------------------------
-// GET /api/members/all (전체 조회)
+// GET /api/members/all (전체 멤버 조회)
 // ----------------------------------------------------
-router.get("/all", async (_req: Request, res: Response) => {
+router.get("/All", async (_req: Request, res: Response) => {
     try {
-        const [rows] = await pool.execute(`SELECT * FROM ${TABLE_NAME}`);
+        const [rows] = await pool.execute(`SELECT * FROM ${TABLE_NAME} ORDER BY name`);
         res.status(200).json({ success: true, data: rows });
     } catch (err) {
-        console.error("GET /members/all 쿼리 오류:", err);
+        console.error("GET /members/all 오류:", err);
         res.status(500).json({ success: false, message: getErrorMessage(err) });
     }
 });
 
 // ----------------------------------------------------
-// GET /api/members/:id (단일 row 조회)
+// GET /api/members/:id (특정 멤버 조회)
 // ----------------------------------------------------
-router.get("/:id", async (_req: Request, res: Response) => {
+router.get("/:id", async (req: Request, res: Response) => {
     try {
-        const [rows] = await pool.execute(`SELECT * FROM ${TABLE_NAME} WHERE id = 1`);
+        const memberId = req.params.id;
+        const [rows] = await pool.execute(`SELECT * FROM ${TABLE_NAME} WHERE id = ?`, [memberId]);
         const data = rows as any[];
         if (data.length === 0) {
-            return res.status(404).json({ success: false, message: "설정 정보를 찾을 수 없습니다." });
+            return res.status(404).json({ success: false, message: "멤버를 찾을 수 없습니다." });
         }
         res.status(200).json({ success: true, data: data[0] });
     } catch (err) {
-        console.error("GET /members/:id 오류:", err);
+        console.error(`GET /members/${req.params.id} 오류:`, err);
         res.status(500).json({ success: false, message: getErrorMessage(err) });
     }
 });
 
 // ----------------------------------------------------
-// POST /api/members (S3 이미지 업로드 + settings 업데이트)
+// POST /api/members (멤버 생성/업데이트)
 // ----------------------------------------------------
 router.post("/", upload.array("images"), async (req: Request, res: Response) => {
     try {
@@ -72,6 +72,10 @@ router.post("/", upload.array("images"), async (req: Request, res: Response) => 
         const data: MemberPayload =
             typeof req.body.payload === "string" ? JSON.parse(req.body.payload) : req.body.payload;
 
+        if (!data.id || !data.name || !data.type) {
+            return res.status(400).json({ success: false, message: "id, name, type은 필수입니다." });
+        }
+
         const files = req.files as Express.Multer.File[] | undefined;
         const uploadedImages: string[] = [];
 
@@ -79,7 +83,7 @@ router.post("/", upload.array("images"), async (req: Request, res: Response) => 
         if (files?.length) {
             for (const file of files) {
                 const ext = file.mimetype.split("/").pop() || "png";
-                const destPath = `settings/main/${uuidv4()}.${ext}`;
+                const destPath = `members/${data.id}/${uuidv4()}.${ext}`;
                 try {
                     const imageUrl = await uploadBufferToStorage(file.buffer, destPath, file.mimetype);
                     uploadedImages.push(imageUrl);
@@ -94,44 +98,45 @@ router.post("/", upload.array("images"), async (req: Request, res: Response) => 
             c.type === "image" ? { type: "image", content: uploadedImages.shift() || c.content } : c
         );
 
-        // 3️⃣ SNS, tracks JSON 변환
+        // 3️⃣ JSON 변환
         const snsJson = JSON.stringify(data.sns || {});
         const tracksJson = JSON.stringify(data.tracks || []);
 
-        // 4️⃣ settings 테이블 INSERT / UPDATE
+        // 4️⃣ INSERT OR UPDATE
         const query = `
-            INSERT INTO ${TABLE_NAME} (id, main_image, sns_links, contents, tracks)
-            VALUES (1, ?, ?, ?, ?)
+            INSERT INTO ${TABLE_NAME} (id, name, type, main_image, tracks, contents, sns_links)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
+                name = VALUES(name),
+                type = VALUES(type),
                 main_image = VALUES(main_image),
-                sns_links = VALUES(sns_links),
+                tracks = VALUES(tracks),
                 contents = VALUES(contents),
-                tracks = VALUES(tracks)
+                sns_links = VALUES(sns_links)
         `;
 
         await pool.execute<ResultSetHeader>(query, [
-            uploadedImages[0] || data.mainImage || null,
-            snsJson,
+            data.id,
+            data.name,
+            data.type,
+            uploadedImages[0] || null,
+            tracksJson,
             JSON.stringify(contentsWithImages),
-            tracksJson
+            snsJson
         ]);
 
         res.status(200).json({
             success: true,
             data: {
-                mainImage: uploadedImages[0] || data.mainImage || null,
-                contents: contentsWithImages,
-                sns: data.sns || {},
-                tracks: data.tracks || [],
-                type: data.type,
-                id: data.id,
-                name: data.name
+                ...data,
+                mainImage: uploadedImages[0] || null,
+                contents: contentsWithImages
             }
         });
 
     } catch (err) {
         console.error(err);
-        res.status(500).json({ success: false, message: `Failed to save settings: ${getErrorMessage(err)}` });
+        res.status(500).json({ success: false, message: `Failed to save member: ${getErrorMessage(err)}` });
     }
 });
 
