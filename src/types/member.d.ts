@@ -50,4 +50,5 @@ export type MemberPayload = {
     // ⭐️ contents 속성 타입을 새로 정의한 MemberContentPayloadItem[]으로 변경
     contents: MemberContentPayloadItem[]; 
     sns: MemberSNS;
+    mainImage?: string;
 };
