@@ -19,15 +19,15 @@ router.use("/members", profileRoutes);
 router.use("/gallery", galleryRoutes);
 
 // /api/notices
-router.use("/notices", noticeRoutes);
+router.use("/notice", noticeRoutes);
 
 // /api/schedules
-router.use("/schedules", scheduleRoutes);
+router.use("/schedule", scheduleRoutes);
 
 // /api/albums
-router.use("/albums", albumRoutes);
+router.use("/album", albumRoutes);
 
 // /api/videos
-router.use("/videos", videoRoutes);
+router.use("/video", videoRoutes);
 
 export default router;

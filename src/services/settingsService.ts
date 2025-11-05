@@ -1,90 +1,128 @@
 // ⭐️ DB 연결 풀 임포트
-import pool from "../config/db-config"; 
-// ⭐️ AWS S3 버퍼 업로드 함수 임포트 (이전에 수정한 파일)
-import { uploadBufferToStorage } from "../utils/aws-s3-upload"; 
+import pool from "@config/db-config"; 
+// ⭐️ AWS S3 버퍼 업로드 및 삭제 함수 임포트
+import { uploadBufferToStorage, deleteFromStorage } from "@utils/aws-s3-upload"; 
 import type { SettingsData, SnsLink } from "@/types/settings";
 import { RowDataPacket } from 'mysql2/promise';
+import type { Express } from 'express';
 
-const TABLE_NAME = "settings"; // MariaDB 테이블 이름 (단일 로우 가정)
+const TABLE_NAME = "settings"; 
 const DEFAULT_SNS_IDS: SnsLink["id"][] = ["instagram", "youtube", "twitter", "cafe", "shop"];
+const MAIN_IMAGE_S3_KEY = "images/main.png"; // 메인 이미지의 고정 S3 키
 
-// DB에서 반환될 설정 로우 타입 정의 (JSON 컬럼을 저장할 컬럼 이름 'data'라고 가정)
+// DB에서 반환될 설정 로우 타입 정의
 interface SettingsRow extends RowDataPacket {
-    id: number; // Primary Key
-    data: string; // JSON 문자열이 저장될 컬럼
+    id: number; 
+    data: string; 
 }
-// 또는 JSON 컬럼이 MariaDB에서 객체로 자동 파싱된다면:
-// interface SettingsRow extends SettingsData, RowDataPacket { id: number; }
 
+// ----------------------------------------------------
+// DB 조회 (GET)
+// ----------------------------------------------------
 /**
  * 설정 조회
  */
 export const getSettings = async (): Promise<SettingsData> => {
-    
-    // MariaDB에서 단일 로우 조회
-    const [rows] = await pool.execute<SettingsRow[]>(
-        `SELECT * FROM ${TABLE_NAME} WHERE id = 1` // 보통 단일 설정 로우는 ID 1 사용
-    );
+    const [rows] = await pool.execute<SettingsRow[]>(
+        `SELECT data FROM ${TABLE_NAME} WHERE id = 1`
+    );
 
-    if (rows.length === 0 || !rows[0].data) {
-        // 데이터베이스에 설정 로우가 없거나 데이터가 비어있으면 기본값 반환
-        return {
-            mainImage: "",
-            snsLinks: DEFAULT_SNS_IDS.map(id => ({ id, url: "" })),
-        };
-    }
+    if (rows.length === 0 || !rows[0].data) {
+        return {
+            mainImage: "",
+            snsLinks: DEFAULT_SNS_IDS.map(id => ({ id, url: "" })),
+        };
+    }
 
-    // JSON 문자열을 객체로 파싱
-    const stored: SettingsData = JSON.parse(rows[0].data as string);
+    const stored: SettingsData = JSON.parse(rows[0].data as string);
 
-    // 저장된 데이터를 반환하되, SNS 링크는 기본 순서와 개수를 보장
-    return {
-        mainImage: stored.mainImage || "",
-        snsLinks: DEFAULT_SNS_IDS.map(
-            id => stored.snsLinks?.find(link => link.id === id) || { id, url: "" }
-        ),
-    };
+    return {
+        mainImage: stored.mainImage || "",
+        snsLinks: DEFAULT_SNS_IDS.map(
+            id => stored.snsLinks?.find(link => link.id === id) || { id, url: "" }
+        ),
+    };
 };
 
+// ----------------------------------------------------
+// DB 저장 (UPSERT)
+// ----------------------------------------------------
 /**
  * 설정 저장
  */
 export const saveSettings = async (
-    snsLinks: SnsLink[],
-    file?: Express.Multer.File
+    snsLinks: SnsLink[],
+    file?: Express.Multer.File
 ): Promise<SettingsData> => {
-    
-    // 1. SNS 링크 기본값 보장
-    const finalSnsLinks: SnsLink[] = DEFAULT_SNS_IDS.map(
-        id => snsLinks.find(l => l.id === id) || { id, url: "" }
-    );
+    
+    const currentSettings = await getSettings();
+    let mainImage = currentSettings.mainImage || ""; 
 
-    let mainImage = "";
+    if (file) {
+        // 새 파일이 업로드된 경우: 기존 S3 파일 삭제 후 새 파일 업로드
+        try {
+            await deleteFromStorage(MAIN_IMAGE_S3_KEY);
+            console.log(`[S3 DELETE] Deleted old main image: ${MAIN_IMAGE_S3_KEY}`);
+        } catch (e) {
+            console.warn(`Error deleting old main image (key: ${MAIN_IMAGE_S3_KEY}):`, e);
+        }
+
+        mainImage = await uploadBufferToStorage(file.buffer, MAIN_IMAGE_S3_KEY, file.mimetype);
+    } 
+    // 파일이 없으면 기존 mainImage 값 유지 (1단계에서 설정됨)
+
+    const finalSnsLinks: SnsLink[] = DEFAULT_SNS_IDS.map(
+        id => snsLinks.find(l => l.id === id) || { id, url: "" }
+    );
+
+    const settingsData: SettingsData = { snsLinks: finalSnsLinks, mainImage };
+    const settingsJsonString = JSON.stringify(settingsData);
+    
+    // DB 업데이트
+    await pool.execute(
+        `INSERT INTO ${TABLE_NAME} (id, data) 
+         VALUES (1, ?)
+         ON DUPLICATE KEY UPDATE data = VALUES(data)`,
+        [settingsJsonString]
+    );
+
+    return settingsData;
+};
+
+// ----------------------------------------------------
+// ⭐️ 메인 이미지 삭제 (TS2339 오류 해결)
+// ----------------------------------------------------
+/**
+ * 메인 이미지 삭제
+ */
+export const deleteMainImage = async (): Promise<boolean> => {
     
-    // 2. 이미지 처리
-    if (file) {
-        // AWS S3에 이미지 업로드 (파일 이름 고정: images/main.png)
-        const destPath = "images/main.png";
-        // ⭐️ 이전에 수정한 S3 버퍼 업로드 함수 사용
-        mainImage = await uploadBufferToStorage(file.buffer, destPath, file.mimetype);
-    } else {
-        // 파일이 없으면 기존 이미지 URL을 DB에서 조회하여 유지
-        const currentSettings = await getSettings();
-        mainImage = currentSettings.mainImage || "";
+    // 1. 기존 설정 조회
+    const currentSettings = await getSettings();
+    const currentImageUrl = currentSettings.mainImage;
+
+    if (!currentSettings || !currentImageUrl) {
+        return false; // 삭제할 이미지가 없음
     }
 
-    // 3. 최종 데이터 객체 준비 및 JSON 직렬화
-    const settingsData: SettingsData = { snsLinks: finalSnsLinks, mainImage };
+    // 2. S3에서 이미지 삭제
+    try {
+        await deleteFromStorage(MAIN_IMAGE_S3_KEY);
+        console.log(`[S3 DELETE] Deleted main image key: ${MAIN_IMAGE_S3_KEY}`);
+    } catch (e) {
+        console.warn(`Error deleting main image from S3 (key: ${MAIN_IMAGE_S3_KEY}):`, e);
+    }
+
+    // 3. DB 업데이트: mainImage 필드를 빈 문자열("")로 설정하고 전체 JSON 업데이트
+    const settingsData = { ...currentSettings, mainImage: "" };
     const settingsJsonString = JSON.stringify(settingsData);
     
-    // 4. MariaDB에 저장 (ID=1 로우에 덮어쓰기 또는 삽입)
-    // ON DUPLICATE KEY UPDATE를 사용하여, ID=1이 있으면 업데이트, 없으면 삽입합니다.
     await pool.execute(
-        `INSERT INTO ${TABLE_NAME} (id, data) 
-         VALUES (1, ?)
-         ON DUPLICATE KEY UPDATE data = VALUES(data)`,
-        [settingsJsonString]
-    );
+        `INSERT INTO ${TABLE_NAME} (id, data) 
+         VALUES (1, ?)
+         ON DUPLICATE KEY UPDATE data = VALUES(data)`,
+        [settingsJsonString]
+    );
 
-    return settingsData;
+    return true; 
 };

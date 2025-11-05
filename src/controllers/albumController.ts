@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
-// ⭐️ 이 경로는 MariaDB/S3 기반의 새로운 albumService 파일을 바라봅니다.
-import * as albumService from "../services/albumService";
+import * as albumService from "@services/albumService";
+import type { Express } from 'express'; 
 
 // 헬퍼 함수: 오류 메시지 추출 (TypeScript 'unknown' 타입 처리)
 const getErrorMessage = (err: unknown): string => {
@@ -10,17 +10,22 @@ const getErrorMessage = (err: unknown): string => {
 };
 
 // ----------------------------------------------------
+// 1. 앨범 목록 조회 (GET /albums)
+// ----------------------------------------------------
 
 export const getAlbums = async (req: Request, res: Response) => {
     try {
         const albums = await albumService.getAlbums();
         res.json({ success: true, data: albums });
     } catch (err) {
-        console.error(err);
-        // ⭐️ 오류 처리 안정화
+        console.error("GET /albums 오류:", err);
         res.status(500).json({ success: false, message: `앨범 조회 실패: ${getErrorMessage(err)}` });
     }
 };
+
+// ----------------------------------------------------
+// 2. 앨범 상세 조회 (GET /albums/:id)
+// ----------------------------------------------------
 
 export const getAlbum = async (req: Request, res: Response) => {
     try {
@@ -28,51 +33,75 @@ export const getAlbum = async (req: Request, res: Response) => {
         if (!album) return res.status(404).json({ success: false, message: "앨범을 찾을 수 없습니다." });
         res.json({ success: true, data: album });
     } catch (err) {
-        console.error(err);
-        // ⭐️ 오류 처리 안정화
+        console.error("GET /albums/:id 오류:", err);
         res.status(500).json({ success: false, message: `앨범 상세 조회 실패: ${getErrorMessage(err)}` });
     }
 };
 
+// ----------------------------------------------------
+// 3. 앨범 생성 (POST /albums)
+// ----------------------------------------------------
+
 export const createAlbum = async (req: Request, res: Response) => {
     try {
-        // 서비스 계층에서 유효성 검사 및 DB/S3 처리를 수행합니다.
-        const album = await albumService.createAlbum(req.body, req.file);
-        res.json({ success: true, data: album });
+        const { title, date } = req.body;
+        
+        if (!title || !date) {
+            return res.status(400).json({ success: false, message: "앨범 제목(title)과 발매일(date)은 필수 항목입니다." });
+        }
+        
+        // ⭐️ req.file 타입 단언: Express.Multer.File 타입을 명시적으로 사용
+        const file = req.file as Express.Multer.File | undefined;
+        const album = await albumService.createAlbum(req.body, file);
+        
+        res.status(201).json({ success: true, data: album }); 
     } catch (err) {
-        console.error(err);
-        // ⭐️ 오류 처리 안정화
+        console.error("POST /albums 오류:", err);
         res.status(500).json({ success: false, message: `앨범 생성 실패: ${getErrorMessage(err)}` });
     }
 };
 
+// ----------------------------------------------------
+// 4. 앨범 수정 (PUT /albums/:id)
+// ----------------------------------------------------
+
 export const updateAlbum = async (req: Request, res: Response) => {
     try {
-        const album = await albumService.updateAlbum(req.params.id, req.body, req.file);
+        const id = req.params.id;
+        
+        if (!id) {
+            return res.status(400).json({ success: false, message: "수정할 앨범의 ID가 누락되었습니다." });
+        }
+        
+        // ⭐️ req.file 타입 단언: Express.Multer.File 타입을 명시적으로 사용
+        const file = req.file as Express.Multer.File | undefined;
+        const album = await albumService.updateAlbum(id, req.body, file);
+        
         if (!album) return res.status(404).json({ success: false, message: "앨범을 찾을 수 없습니다." });
+        
         res.json({ success: true, data: album });
     } catch (err) {
-        console.error(err);
-        // ⭐️ 오류 처리 안정화
+        console.error("PUT /albums/:id 오류:", err);
         res.status(500).json({ success: false, message: `앨범 수정 실패: ${getErrorMessage(err)}` });
     }
 };
 
+// ----------------------------------------------------
+// 5. 앨범 삭제 (DELETE /albums/:id)
+// ----------------------------------------------------
+
 export const deleteAlbum = async (req: Request, res: Response) => {
     try {
-        // 서비스 계층에서 DB 데이터와 S3 파일을 모두 삭제합니다.
         await albumService.deleteAlbum(req.params.id);
         res.json({ success: true, message: "앨범 삭제 완료" });
     } catch (err) {
-        console.error(err);
+        console.error("DELETE /albums/:id 오류:", err);
         const message = getErrorMessage(err);
         
-        // ⭐️ 404 에러 처리 강화 (서비스에서 "not found" 에러를 던진다고 가정)
-        if (message.includes("not found")) {
+        if (message.includes("not found") || message.includes("Album not found")) {
             return res.status(404).json({ success: false, message: "앨범을 찾을 수 없거나 이미 삭제되었습니다." });
         }
         
-        // 500 에러 처리
         res.status(500).json({ success: false, message: `앨범 삭제 실패: ${message}` });
     }
 };

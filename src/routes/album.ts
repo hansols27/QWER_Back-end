@@ -1,34 +1,50 @@
 import { Router } from "express";
 import multer from "multer";
-import * as albumController from "../controllers/albumController";
+import * as albumController from "@controllers/albumController"; 
 
 const router = Router();
 
-// Multer 설정 (메모리 저장, 이미지 파일만 허용, 최대 5MB)
+// Multer 설정: 라우터의 고유 역할이므로 유지합니다.
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-  fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Only image files are allowed"));
-    }
-    cb(null, true);
-  }
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const allowedTypes = ["image/jpeg", "image/jpg", "image/png"];
+        if (!allowedTypes.includes(file.mimetype)) {
+            return cb(new Error("지원되는 이미지 형식은 jpg, jpeg, png만 가능합니다."));
+        }
+        cb(null, true);
+    },
 });
 
-// 앨범 목록 조회
-router.get("/", albumController.getAlbums);
+// ---
+// 1. 앨범 목록 조회 (GET /api/album)
+// ---
+// ⭐️ 라우터 핸들러를 컨트롤러 함수로 대체
+router.get("/", albumController.getAlbums); 
 
-// 단일 앨범 조회
+// ---
+// 2. 앨범 상세 조회 (GET /api/album/:id)
+// ---
+// ⭐️ 라우터 핸들러를 컨트롤러 함수로 대체
 router.get("/:id", albumController.getAlbum);
 
-// 앨범 등록 (커버 이미지 업로드 가능)
-router.post("/", upload.single("image"), albumController.createAlbum);
+// ---
+// 3. 앨범 등록 (POST /api/album)
+// ---
+// ⭐️ Multer 미들웨어 적용 후 컨트롤러 함수로 전달
+router.post("/", upload.single("coverFile"), albumController.createAlbum);
 
-// 앨범 수정 (커버 이미지 업로드 가능)
-router.put("/:id", upload.single("image"), albumController.updateAlbum);
+// ---
+// 4. 앨범 수정 (PUT /api/album/:id)
+// ---
+// ⭐️ Multer 미들웨어 적용 후 컨트롤러 함수로 전달
+router.put("/:id", upload.single("coverFile"), albumController.updateAlbum);
 
-// 앨범 삭제
+// ---
+// 5. 앨범 삭제 (DELETE /api/album/:id)
+// ---
+// ⭐️ 라우터 핸들러를 컨트롤러 함수로 대체
 router.delete("/:id", albumController.deleteAlbum);
 
 export default router;
