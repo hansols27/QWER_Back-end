@@ -8,7 +8,9 @@ dotenv.config();
 const app = express();
 
 // CORS 허용 도메인을 환경변수에서 가져오기
-const allowedOrigins = (process.env.CORS_ORIGINS || "").split(",");
+const allowedOrigins = (process.env.CORS_ORIGINS || "")
+                        .split(",")
+                        .map(origin => origin.trim());
 
 app.use(cors({
   origin: allowedOrigins,
