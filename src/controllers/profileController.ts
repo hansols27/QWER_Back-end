@@ -44,7 +44,7 @@ export const createOrUpdateProfile = async (req: Request, res: Response) => {
 
         res.status(statusCode).json({ success: true, data: result });
     } catch (err) {
-        console.error("POST/PUT /profile/:id 오류:", err);
+        console.error("POST/PUT /members/:id 오류:", err);
         // 500 에러 처리
         res.status(500).json({ success: false, error: getErrorMessage(err) });
     }
@@ -63,7 +63,7 @@ export const getProfile = async (req: Request, res: Response) => {
         }
         res.status(200).json({ success: true, data: profile });
     } catch (err) {
-        console.error("GET /profile/:id 오류:", err);
+        console.error("GET /members/:id 오류:", err);
         // 500 에러 처리
         res.status(500).json({ success: false, error: getErrorMessage(err) });
     }

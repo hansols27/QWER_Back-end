@@ -17,7 +17,7 @@ export const getVideos = async (req: Request, res: Response) => {
         const videos = await videoService.getVideos();
         res.status(200).json({ success: true, data: videos });
     } catch (err) {
-        console.error("GET /videos 오류:", err);
+        console.error("GET /video 오류:", err);
         res.status(500).json({ success: false, message: `Failed to fetch videos: ${getErrorMessage(err)}` });
     }
 };
@@ -33,7 +33,7 @@ export const getVideoById = async (req: Request, res: Response) => {
         if (!video) return res.status(404).json({ success: false, message: "Video not found" });
         res.status(200).json({ success: true, data: video });
     } catch (err) {
-        console.error("GET /videos/:id 오류:", err);
+        console.error("GET /video/:id 오류:", err);
         res.status(500).json({ success: false, message: `Failed to fetch video: ${getErrorMessage(err)}` });
     }
 };
@@ -55,7 +55,7 @@ export const createVideo = async (req: Request, res: Response) => {
 
         res.status(201).json({ success: true, data: video });
     } catch (err) {
-        console.error("POST /videos 오류:", err);
+        console.error("POST /video 오류:", err);
         res.status(500).json({ success: false, message: `Failed to create video: ${getErrorMessage(err)}` });
     }
 };
@@ -76,7 +76,7 @@ export const updateVideo = async (req: Request, res: Response) => {
         
         res.status(200).json({ success: true });
     } catch (err) {
-        console.error("PUT /videos/:id 오류:", err);
+        console.error("PUT /video/:id 오류:", err);
         res.status(500).json({ success: false, message: `Failed to update video: ${getErrorMessage(err)}` });
     }
 };

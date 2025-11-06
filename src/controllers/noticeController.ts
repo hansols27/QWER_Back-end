@@ -16,7 +16,7 @@ export async function getNotices(req: Request, res: Response) {
         const notices = await noticeService.getNotices();
         res.json({ success: true, data: notices });
     } catch (err) {
-        console.error("GET /notices 오류:", err);
+        console.error("GET /notice 오류:", err);
         res.status(500).json({ success: false, message: `공지사항 조회 실패: ${getErrorMessage(err)}` });
     }
 }
@@ -36,7 +36,7 @@ export async function getNotice(req: Request, res: Response) {
         
         res.json({ success: true, data: notice });
     } catch (err) {
-        console.error("GET /notices/:id 오류:", err);
+        console.error("GET /notice/:id 오류:", err);
         // 기타 DB 또는 알 수 없는 오류는 500 처리
         res.status(500).json({ success: false, message: `공지사항 상세 조회 실패: ${getErrorMessage(err)}` });
     }
@@ -55,7 +55,7 @@ export async function createNotice(req: Request, res: Response) {
         const newNotice = await noticeService.createNotice({ type, title, content });
         res.status(201).json({ success: true, data: newNotice });
     } catch (err) {
-        console.error("POST /notices 오류:", err);
+        console.error("POST /notice 오류:", err);
         res.status(500).json({ success: false, message: `공지사항 등록 실패: ${getErrorMessage(err)}` });
     }
 }
@@ -78,7 +78,7 @@ export async function updateNotice(req: Request, res: Response) {
         
         res.json({ success: true, message: "공지사항 수정 완료" });
     } catch (err) {
-        console.error("PUT /notices/:id 오류:", err);
+        console.error("PUT /notice/:id 오류:", err);
         res.status(500).json({ success: false, message: `공지사항 수정 실패: ${getErrorMessage(err)}` });
     }
 }
@@ -100,7 +100,7 @@ export async function deleteNotice(req: Request, res: Response) {
         
         res.json({ success: true, message: "공지사항 삭제 완료" });
     } catch (err) {
-        console.error("DELETE /notices/:id 오류:", err);
+        console.error("DELETE /notice/:id 오류:", err);
         res.status(500).json({ success: false, message: `공지사항 삭제 실패: ${getErrorMessage(err)}` });
     }
 }

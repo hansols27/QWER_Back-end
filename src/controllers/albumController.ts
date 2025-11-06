@@ -18,7 +18,7 @@ export const getAlbums = async (req: Request, res: Response) => {
         const albums = await albumService.getAlbums();
         res.json({ success: true, data: albums });
     } catch (err) {
-        console.error("GET /albums 오류:", err);
+        console.error("GET /album 오류:", err);
         res.status(500).json({ success: false, message: `앨범 조회 실패: ${getErrorMessage(err)}` });
     }
 };
@@ -33,7 +33,7 @@ export const getAlbum = async (req: Request, res: Response) => {
         if (!album) return res.status(404).json({ success: false, message: "앨범을 찾을 수 없습니다." });
         res.json({ success: true, data: album });
     } catch (err) {
-        console.error("GET /albums/:id 오류:", err);
+        console.error("GET /album/:id 오류:", err);
         res.status(500).json({ success: false, message: `앨범 상세 조회 실패: ${getErrorMessage(err)}` });
     }
 };
@@ -56,7 +56,7 @@ export const createAlbum = async (req: Request, res: Response) => {
         
         res.status(201).json({ success: true, data: album }); 
     } catch (err) {
-        console.error("POST /albums 오류:", err);
+        console.error("POST /album 오류:", err);
         res.status(500).json({ success: false, message: `앨범 생성 실패: ${getErrorMessage(err)}` });
     }
 };
@@ -81,7 +81,7 @@ export const updateAlbum = async (req: Request, res: Response) => {
         
         res.json({ success: true, data: album });
     } catch (err) {
-        console.error("PUT /albums/:id 오류:", err);
+        console.error("PUT /album/:id 오류:", err);
         res.status(500).json({ success: false, message: `앨범 수정 실패: ${getErrorMessage(err)}` });
     }
 };
@@ -95,7 +95,7 @@ export const deleteAlbum = async (req: Request, res: Response) => {
         await albumService.deleteAlbum(req.params.id);
         res.json({ success: true, message: "앨범 삭제 완료" });
     } catch (err) {
-        console.error("DELETE /albums/:id 오류:", err);
+        console.error("DELETE /album/:id 오류:", err);
         const message = getErrorMessage(err);
         
         if (message.includes("not found") || message.includes("Album not found")) {
