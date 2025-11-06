@@ -1,5 +1,4 @@
 import { Request, Response } from "express";
-// ⭐️ 이 경로는 MariaDB 기반의 새로운 videoService 파일을 바라봅니다.
 import * as videoService from "@services/videoService"; 
 
 // 헬퍼 함수: 오류 메시지 추출 (TypeScript 'unknown' 처리)
@@ -10,8 +9,8 @@ const getErrorMessage = (err: unknown): string => {
 };
 
 /**
- * 전체 영상 조회
- */
+ * 1. 전체 영상 조회 (GET /video)
+ */
 export const getVideos = async (req: Request, res: Response) => {
     try {
         const videos = await videoService.getVideos();
@@ -23,11 +22,11 @@ export const getVideos = async (req: Request, res: Response) => {
 };
 
 /**
- * 단일 영상 조회
- */
+ * 2. 단일 영상 조회 (GET /video/:id)
+ */
 export const getVideoById = async (req: Request, res: Response) => {
     try {
-        const { id } = req.params;
+        const { id } = req.params; 
         const video = await videoService.getVideoById(id); 
         
         if (!video) return res.status(404).json({ success: false, message: "Video not found" });
@@ -39,8 +38,8 @@ export const getVideoById = async (req: Request, res: Response) => {
 };
 
 /**
- * 영상 등록
- */
+ * 3. 영상 등록 (POST /video)
+ */
 export const createVideo = async (req: Request, res: Response) => {
     try {
         const { title, src } = req.body; 
@@ -48,10 +47,8 @@ export const createVideo = async (req: Request, res: Response) => {
             return res.status(400).json({ success: false, message: "Missing required fields (title or src)" });
         }
 
-        // MariaDB 서비스에서 `createdAt` 처리를 전적으로 담당하도록 `createdAt` 전달을 제거할 수 있지만,
-        // 기존 서비스 시그니처 유지를 위해 현재 로직을 유지합니다.
-        const createdAt = new Date().toISOString(); 
-        const video = await videoService.createVideo({ title, src, createdAt });
+        // 🚨 타입 수정 반영: createdAt 필드 없이 title, src만 전달
+        const video = await videoService.createVideo({ title, src });
 
         res.status(201).json({ success: true, data: video });
     } catch (err) {
@@ -61,19 +58,18 @@ export const createVideo = async (req: Request, res: Response) => {
 };
 
 /**
- * 영상 수정
- */
+ * 4. 영상 수정 (PUT /video/:id)
+ */
 export const updateVideo = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         
-        // ⭐️ 서비스에서 affectedRows를 받아 대상이 있었는지 확인합니다.
         const affectedRows = await videoService.updateVideo(id, req.body); 
-        
-        if (affectedRows === 0) {
-            return res.status(404).json({ success: false, message: "Video not found" });
-        }
-        
+        
+        if (affectedRows === 0) {
+            return res.status(404).json({ success: false, message: "Video not found" });
+        }
+        
         res.status(200).json({ success: true });
     } catch (err) {
         console.error("PUT /video/:id 오류:", err);
@@ -82,19 +78,18 @@ export const updateVideo = async (req: Request, res: Response) => {
 };
 
 /**
- * 영상 삭제
- */
+ * 5. 영상 삭제 (DELETE /video/:id)
+ */
 export const deleteVideo = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
-        
-        // ⭐️ 서비스에서 affectedRows를 받아 대상이 있었는지 확인합니다.
+        
         const affectedRows = await videoService.deleteVideo(id);
-        
-        if (affectedRows === 0) {
-            return res.status(404).json({ success: false, message: "Video not found" });
-        }
-        
+        
+        if (affectedRows === 0) {
+            return res.status(404).json({ success: false, message: "Video not found" });
+        }
+        
         res.status(200).json({ success: true });
     } catch (err) {
         console.error("DELETE /videos/:id 오류:", err);

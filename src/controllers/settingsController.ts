@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import * as settingsService from "../services/settingsService"; 
+import * as settingsService from "@services/settingsService"; 
 import type { SnsLink } from "@/types/settings";
 import type { Express } from "express"; // req.file 타입 명시를 위해 추가
 
