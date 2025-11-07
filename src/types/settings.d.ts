@@ -1,8 +1,7 @@
-// 공통 타입
 export interface SnsLink {
   id: "instagram" | "youtube" | "twitter" | "cafe" | "shop";
   url: string;
-  icon?: string; // frontend에서만 사용
+  icon?: string; 
 }
 
 export interface SettingsData {

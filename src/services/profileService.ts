@@ -1,75 +1,82 @@
-// ⭐️ MariaDB 연결 풀 임포트 (경로 확인)
 import pool from "@config/db-config";
-// ⭐️ AWS S3 버퍼 업로드 및 삭제 함수 임포트
 import { uploadBufferToStorage, deleteFromStorage } from '@utils/aws-s3-upload'; 
-
-// ⭐️ 타입 임포트
-import { MemberPayload, MemberState, MemberContentPayloadItem } from '@/types/member';
-import type { Express } from 'express';
 import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import type { Express } from 'express';
 
-// 🚨 테이블 이름 수정: 이전에 제안했던 테이블 이름 'members' 사용
+// ======================================================================
+// 📌 프론트엔드 타입 정의 
+// ======================================================================
+import type { 
+    TextItem, 
+    ImageItem as APIImageItem, 
+    SNSLinkItem, 
+    MemberProfileState, 
+    MemberProfilePayload 
+} from "@/types/member"; 
+
+// ======================================================================
+// 📌 상수 및 타입 정의
+// ======================================================================
 const TABLE_NAME = "members"; 
 
-// DB에서 반환될 로우 타입 정의 (DB 구조에 맞춤)
+// DB에서 반환될 로우 타입 정의 (🚨 DB 구조 변경: contents 제거, text_contents/image_urls 추가)
 interface MemberRow extends RowDataPacket {
-    id: string; // 멤버 ID (VARCHAR(255))
-    name: string; // 멤버 이름 (VARCHAR(100))
-    type: string; // 멤버 타입 (VARCHAR(50))
-    tracks: string; // JSON 문자열
-    contents: string; // JSON 문자열
-    sns: string; // JSON 문자열
-    // createdAt, updatedAt 생략 가능
+    id: string; 
+    name: string; 
+    text_contents: string; // JSON 문자열 (texts)
+    image_urls: string;    // JSON 문자열 (images)
+    sns: string;           // JSON 문자열 (snslinks)
 }
 
-/**
- * 헬퍼: S3 URL에서 키(Key) 추출 (S3 삭제 시 사용)
- * @param url S3 파일의 전체 URL
- * @returns S3 Key 문자열 또는 null
- */
+// 헬퍼 함수: extractS3Key는 동일하게 유지
 const extractS3Key = (url: string): string | null => {
     try {
         const urlParts = new URL(url);
-        // 경로에서 첫 '/'를 제거한 나머지 문자열이 Key입니다.
         const path = urlParts.pathname.substring(1); 
-        // 'members/' 경로로 시작하는지 확인 (선택 사항)
         return path.startsWith('members/') ? path : null;
     } catch (e) {
         return null;
     }
 };
 
-// 헬퍼: DB 로우를 MemberPayload로 변환
-const mapRowToMemberPayload = (row: MemberRow): MemberPayload => ({
-    id: row.id,
-    name: row.name,
-    type: row.type,
-    tracks: JSON.parse(row.tracks || '[]'),
-    contents: JSON.parse(row.contents || '[]'),
-    sns: JSON.parse(row.sns || '{}'),
-});
-
-
 // ----------------------------------------------------
-// DB 조회 (GET)
+// DB 조회 (GET) - MemberProfileState 형식으로 반환
 // ----------------------------------------------------
 
 /**
  * MariaDB에서 프로필 조회
  * @param id 멤버 ID
- * @returns MemberPayload 객체 또는 null
+ * @returns MemberProfileState 객체 또는 null
  */
-export const getProfileById = async (id: string): Promise<MemberPayload | null> => {
-    // 🚨 컬럼 수정: data 대신 tracks, contents, sns를 조회
+export const getProfileById = async (id: string): Promise<MemberProfileState | null> => {
+    // 🚨 SELECT 쿼리 수정: contents 대신 text_contents와 image_urls 조회
     const [rows] = await pool.execute<MemberRow[]>(
-        `SELECT id, name, type, tracks, contents, sns FROM ${TABLE_NAME} WHERE id = ?`,
+        `SELECT id, name, text_contents, image_urls, sns FROM ${TABLE_NAME} WHERE id = ?`,
         [id]
     );
 
     if (rows.length === 0) return null;
+    const row = rows[0];
 
-    // JSON 문자열을 객체로 파싱하여 반환
-    return mapRowToMemberPayload(rows[0]);
+    try {
+        // 🚨 텍스트와 이미지를 분리된 컬럼에서 JSON 파싱
+        const texts: TextItem[] = row.text_contents ? JSON.parse(row.text_contents) : []; 
+        const images: APIImageItem[] = row.image_urls ? JSON.parse(row.image_urls) : [];
+        const snslinks: SNSLinkItem[] = row.sns ? JSON.parse(row.sns) : [];
+
+        const profile: MemberProfileState = {
+            id: row.id as any,
+            name: row.name, 
+            type: row.id as any, 
+            texts: texts,
+            images: images,
+            snslinks: snslinks,
+        };
+        return profile;
+    } catch (e) {
+        console.error("Error parsing DB JSON for profile:", e);
+        return null;
+    }
 };
 
 // ----------------------------------------------------
@@ -77,104 +84,80 @@ export const getProfileById = async (id: string): Promise<MemberPayload | null> 
 // ----------------------------------------------------
 
 /**
- * Admin에서 받은 상태(MemberState)를 MemberPayload로 변환 후 저장 (Upsert)
+ * Admin에서 받은 상태(MemberProfilePayload)를 기반으로 저장 (Upsert)
  * @param id 멤버 ID
- * @param name 멤버 이름
- * @param data Admin으로부터 받은 MemberState 데이터
- * @param files Multer로 받은 커버 이미지 파일 목록
- * @returns 새로 업로드된 이미지 URL 목록
+ * @param payload 프론트엔드로부터 받은 MemberProfilePayload (Member ID, Name 포함)
+ * @param files Multer로 받은 이미지 파일 목록
  */
 export const saveProfile = async (
     id: string,
-    name: string,
-    data: MemberState,
+    payload: MemberProfilePayload,
     files?: Express.Multer.File[]
-): Promise<{ contentsUrls: string[] }> => {
+): Promise<void> => {
 
-    // 🔹 1. 기존 데이터 조회 및 기존 이미지 URL 추출
+    // 🔹 1~3 단계: S3 파일 처리 (로직 동일)
     const existingProfile = await getProfileById(id);
     const existingImageUrls = existingProfile 
-        ? existingProfile.contents.filter(item => item.type === 'image').map(item => item.content)
+        ? existingProfile.images.map(item => item.url)
         : [];
-        
-    const imageUrls: string[] = [];
-    const newFileKeys: string[] = [];
+    
+    const finalImages: APIImageItem[] = []; 
+    let fileIndex = 0; 
 
-    // 🔹 2. 새 이미지 업로드 및 URL/Key 생성
-    if (files && files.length > 0) {
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            // S3 경로: members/id01.png 대신 UUIDv4 사용을 권장합니다.
-            // 여기서는 기존 로직을 유지하되, 파일명 충돌을 방지하기 위해 UUID를 포함하도록 수정합니다.
-            const fileUUID = new Date().getTime(); 
+    for (const item of payload.images) {
+        if (item.url === "file_placeholder" && files && fileIndex < files.length) {
+            const file = files[fileIndex];
+            const fileUUID = new Date().getTime() + '-' + file.originalname; 
             const mimeTypeExtension = file.mimetype.split('/').pop() || 'png';
             const destPath = `members/${id}/${fileUUID}.${mimeTypeExtension}`; 
             
-            const url = await uploadBufferToStorage(file.buffer, destPath, file.mimetype);
-            imageUrls.push(url);
-            newFileKeys.push(destPath);
+            const newUrl = await uploadBufferToStorage(file.buffer, destPath, file.mimetype);
+            finalImages.push({ id: item.id, url: newUrl }); 
+            fileIndex++;
+        } else if (item.url) {
+            finalImages.push(item);
         }
     }
 
-    // 🔹 3. 기존 이미지 삭제 (S3 파일 누적 방지)
-    // 이 로직은 이미지 URL이 바뀌었을 경우에만 기존 파일을 삭제해야 합니다.
-    // 기존 로직을 유지하며 S3 Key를 사용하도록 합니다.
+    const currentUrls = finalImages.map(img => img.url);
     for (const oldUrl of existingImageUrls) {
-        try {
-            const oldKey = extractS3Key(oldUrl);
-            
-            // 기존 Key가 유효하고, 새로 업로드된 Key 목록에 포함되어 있지 않다면 삭제합니다.
-            // (이 로직은 MemberState가 이미지 배열을 URL/File로 구분하여 보낸다는 가정 하에 수정이 필요함)
-            
-            // 단순화: DB에 저장된 기존 URL이 새 이미지 목록에 없다면 삭제
-            if (oldKey && !imageUrls.includes(oldUrl)) { 
-                await deleteFromStorage(oldKey);
-                // console.log(`[S3 DELETE] Deleted old profile image: ${oldKey}`);
+        if (!currentUrls.includes(oldUrl)) { 
+            try {
+                const oldKey = extractS3Key(oldUrl);
+                if (oldKey) { 
+                    await deleteFromStorage(oldKey);
+                    console.log(`[S3 DELETE] Deleted old profile image: ${oldKey}`);
+                }
+            } catch (e) {
+                console.error(`Error extracting/deleting old S3 key: ${oldUrl}`, e);
             }
-        } catch (e) {
-            console.error(`Error extracting/deleting old S3 key: ${oldUrl}`, e);
         }
     }
     
-    // 🔹 4. MemberPayload로 변환
-    const payloadContents: MemberContentPayloadItem[] = [
-        // 텍스트 콘텐츠 매핑
-        ...data.text.map(t => ({ type: 'text' as const, content: t })),
-        // 이미지 콘텐츠 매핑: 기존 URL을 사용하거나 새로 업로드된 URL을 사용
-        ...data.image.map((img, i) => ({
-            type: 'image' as const,
-            // img가 문자열(기존 URL)이거나, 아니면 새로 업로드된 URL을 사용
-            content: typeof img === 'string' ? img : imageUrls[i] ?? ''
-        }))
-    ] as MemberContentPayloadItem[]; 
-
-    const payload: MemberPayload = {
-        id,
-        name,
-        tracks: data.tracks, 
-        type: data.type, 
-        contents: payloadContents, 
-        sns: data.sns ?? {} 
-    };
+    // 🔹 4. MariaDB 저장을 위한 최종 데이터 구성
+    const dbTexts = payload.texts;
+    const dbImages = finalImages.filter(img => img.url.length > 0);
+    const dbSnsLinks = payload.snslinks;
     
+    // 🚨 텍스트와 이미지를 분리된 JSON 문자열로 만듭니다.
+    // 텍스트는 TextItem[] 그대로 저장
+    const textContentsJsonString = JSON.stringify(dbTexts); 
+    // 이미지는 APIImageItem[] 그대로 저장
+    const imageUrlsJsonString = JSON.stringify(dbImages); 
+    
+    const snsJsonString = JSON.stringify(dbSnsLinks);
+
     // 🔹 5. MariaDB 저장 (Upsert)
-    // 🚨 컬럼 수정: tracks, contents, sns 컬럼을 사용
-    const tracksJsonString = JSON.stringify(payload.tracks);
-    const contentsJsonString = JSON.stringify(payload.contents);
-    const snsJsonString = JSON.stringify(payload.sns);
-
-
     await pool.execute<ResultSetHeader>(
-        `INSERT INTO ${TABLE_NAME} (id, name, type, tracks, contents, sns) 
-         VALUES (?, ?, ?, ?, ?, ?)
+        // 🚨 쿼리 수정: contents 대신 text_contents와 image_urls 사용
+        `INSERT INTO ${TABLE_NAME} (id, name, text_contents, image_urls, sns) 
+         VALUES (?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE 
             name = VALUES(name), 
-            type = VALUES(type), 
-            tracks = VALUES(tracks), 
-            contents = VALUES(contents), 
+            text_contents = VALUES(text_contents), 
+            image_urls = VALUES(image_urls),
             sns = VALUES(sns)`,
-        [id, name, data.type, tracksJsonString, contentsJsonString, snsJsonString]
+        // 🚨 인자 순서 수정: id, payload.name, text JSON, image JSON, sns JSON
+        [id, payload.name, textContentsJsonString, imageUrlsJsonString, snsJsonString]
     );
-
-    return { contentsUrls: imageUrls };
 };
