@@ -55,13 +55,8 @@ export const getProfile = async (req: Request, res: Response) => {
         const id = req.params.id;
         
         // 서비스 레이어에서 프로필 조회
-        const profile: MemberProfileState | null = await profileService.getProfileById(id);
-        
-        if (!profile) {
-            // 프로필이 없을 경우 404 반환
-            return res.status(404).json({ success: false, message: "프로필을 찾을 수 없습니다." });
-        }
-        
+        const profile: MemberProfileState | null = await profileService.getProfileById(id);        
+             
         // 조회된 프로필 데이터를 200 OK와 함께 반환
         res.status(200).json({ success: true, data: profile });
         

@@ -30,7 +30,6 @@ export const getAlbums = async (req: Request, res: Response) => {
 export const getAlbum = async (req: Request, res: Response) => {
     try {
         const album = await albumService.getAlbumById(req.params.id);
-        if (!album) return res.status(404).json({ success: false, message: "앨범을 찾을 수 없습니다." });
         res.json({ success: true, data: album });
     } catch (err) {
         console.error("GET /album/:id 오류:", err);
