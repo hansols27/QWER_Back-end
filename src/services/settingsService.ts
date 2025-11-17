@@ -26,7 +26,7 @@ const extractS3Key = (url: string): string | null => {
         const urlParts = new URL(url);
         const path = urlParts.pathname.substring(1); 
         // 새 경로 'assets/images/'에 맞춰 수정
-        return path.startsWith('assets/images/') ? path : null; 
+        return path.startsWith('images/') ? path : null; 
     } catch (e) {
         return null;
     }
