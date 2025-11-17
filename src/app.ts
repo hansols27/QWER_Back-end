@@ -35,9 +35,22 @@ app.use(express.json());
 // ⭐ 모든 API 요청을 '/api'로 묶고, 상세 경로는 index.ts 라우터에 위임
 app.use("/api", mainRouter);
 
+// 루트 경로 처리 (서버 상태 확인용)
+app.get("/", (req: Request, res: Response) => {
+    res.status(200).json({ message: "Welcome to QwerFansite API!", version: "1.0.0" });
+});
+
 // 헬스 체크 엔드포인트
 app.get("/health", (req: Request, res: Response) => {
     res.json({ status: "OK" });
+});
+
+// 404 에러 처리 (모든 요청 처리 후 남은 요청에 대해)
+app.use((req: Request, res: Response, next: NextFunction) => {
+    // 404 에러를 발생시켜 다음 에러 핸들러로 전달
+    const error = new Error(`${req.method} ${req.originalUrl} Not Found`);
+    (error as any).status = 404;
+    next(error);
 });
 
 // 에러 핸들링 미들웨어
