@@ -42,7 +42,6 @@ export async function uploadBufferToStorage(
         Key: key,
         Body: buffer,
         ContentType: contentType,
-        ACL: 'public-read' as ObjectCannedACL, // 타입 오류 수정 완료
     };
 
     try {
