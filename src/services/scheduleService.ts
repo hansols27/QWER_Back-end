@@ -11,21 +11,18 @@ const TABLE_NAME = "schedules"; // MariaDB 테이블 이름
 // ----------------------------------------------------
 
 // DB에서 반환될 스케줄 로우 타입 정의
-// ScheduleEvent와 타입이 충돌하거나 DB에서 다르게 처리되는 필드를 Omit 합니다.
 interface ScheduleRow extends Omit<ScheduleEvent, 'id' | 'start' | 'end' | 'allDay'>, RowDataPacket {
     id: string; // 문자열 UUID
-    // DB에서 string 또는 boolean 형태로 반환되는 필드를 명시합니다.
     start: string; 
     end: string;
-    allDay: number; // DB에서 TINYINT(1)로 저장될 경우 number로 반환될 수 있음
+    allDay: number; // DB에서 TINYINT(1)로 저장될 경우 number로 반환됨
 }
 
 // 헬퍼 함수: DB Row를 ScheduleEvent 타입으로 변환
 const mapRowToScheduleEvent = (row: ScheduleRow): ScheduleEvent => ({
     ...row,
     id: row.id,
-    // ScheduleEvent가 start와 end를 Date 객체로 요구한다면, 여기서 변환해야 합니다.
-    // 현재 코드에서는 string으로 처리하고 있으나, Date로 가정하고 변환 로직을 추가합니다.
+    // DB의 ISO string을 Date 객체로 변환
     start: new Date(row.start),
     end: new Date(row.end),
     // DB의 number(TINYINT)를 boolean으로 변환
@@ -43,25 +40,23 @@ const mapRowToScheduleEvent = (row: ScheduleRow): ScheduleEvent => ({
 export const createSchedule = async (
     data: Omit<ScheduleEvent, 'id'>
 ): Promise<{ id: string }> => {
-    // 1. UUID 생성
     const id = uuidv4();
     
-    // 🚨 Date 객체를 DB에 삽입하기 위해 문자열로 변환해야 합니다.
-    const dataForDb = { 
-        ...data, 
-        start: data.start.toISOString(),
-        end: data.end.toISOString(),
-    };
-
-    // 2. 쿼리 구성 간결화: keys, placeholders, values 배열 생성
-    const dataWithId = { id, ...dataForDb };
-    const keys = Object.keys(dataWithId);
-    const placeholders = keys.map(() => '?').join(', ');
-    const values = Object.values(dataWithId);
-
-    // 3. 데이터 삽입 쿼리 실행
+    // Date 객체와 boolean 값을 DB에 맞게 문자열/number로 변환
+    const values = [
+        id,
+        data.title,
+        data.start.toISOString(),
+        data.end.toISOString(),
+        Number(data.allDay), 
+        data.color, 
+    ];
+    
+    // 쿼리 실행
     await pool.execute<ResultSetHeader>(
-        `INSERT INTO ${TABLE_NAME} (${keys.join(', ')}) VALUES (${placeholders})`,
+        `INSERT INTO ${TABLE_NAME} 
+        (id, title, start, end, allDay, color) 
+        VALUES (?, ?, ?, ?, ?, ?)`,
         values
     );
 
@@ -74,7 +69,7 @@ export const createSchedule = async (
 export const getAllSchedules = async (): Promise<ScheduleEvent[]> => {
     // SQL 쿼리 실행
     const [rows] = await pool.execute<ScheduleRow[]>(
-        `SELECT * FROM ${TABLE_NAME} ORDER BY start ASC`
+        `SELECT id, title, start, end, allDay, color FROM ${TABLE_NAME} ORDER BY start ASC`
     );
     
     // 헬퍼 함수를 사용하여 타입에 맞게 매핑
@@ -87,7 +82,7 @@ export const getAllSchedules = async (): Promise<ScheduleEvent[]> => {
 export const getScheduleById = async (id: string): Promise<ScheduleEvent | null> => {
     // WHERE 조건에 id 사용
     const [rows] = await pool.execute<ScheduleRow[]>(
-        `SELECT * FROM ${TABLE_NAME} WHERE id = ?`, 
+        `SELECT id, title, start, end, allDay, color FROM ${TABLE_NAME} WHERE id = ?`, 
         [id]
     );
 
@@ -105,23 +100,37 @@ export const updateSchedule = async (
     data: Partial<Omit<ScheduleEvent, 'id'>>
 ): Promise<number> => { // affectedRows 반환
     
-    // 🚨 Date 객체가 포함될 경우 DB에 맞게 문자열로 변환해야 합니다.
     const dataForDb: { [key: string]: any } = {};
-    for (const key in data) {
-        const value = data[key as keyof typeof data];
+    
+    // ⭐️ TS7053 오류 수정: Object.keys의 결과를 data의 실제 키 타입으로 명시적으로 캐스팅합니다.
+    const keysToUpdate = Object.keys(data) as Array<keyof typeof data>;
+
+    for (const key of keysToUpdate) {
+        // key는 data에 존재하는 것이 보장됨
+        const value = data[key]; 
+        
+        // Partial 타입이므로 값이 undefined일 수 있습니다.
+        if (value === undefined) continue; 
+        
         if (value instanceof Date) {
+            // Date 객체는 ISO string으로 변환
             dataForDb[key] = value.toISOString();
+        } else if (typeof value === 'boolean') {
+            // boolean은 0 또는 1로 변환
+            dataForDb[key] = Number(value); 
         } else {
             dataForDb[key] = value;
         }
     }
     
-    // SET 구문 생성을 위한 키-값 배열 준비
-    const setClauses = Object.keys(dataForDb).map(key => `${key} = ?`).join(', ');
-    const values = Object.values(dataForDb);
-    
-    if (setClauses.length === 0) return 0;
+    const dataEntries = Object.entries(dataForDb);
 
+    if (dataEntries.length === 0) return 0;
+
+    // SET 구문 생성을 위한 키-값 배열 준비
+    const setClauses = dataEntries.map(([key]) => `${key} = ?`).join(', ');
+    const values = dataEntries.map(([, value]) => value);
+    
     // UPDATE 쿼리 실행
     const [result] = await pool.execute<ResultSetHeader>(
         `UPDATE ${TABLE_NAME} SET ${setClauses} WHERE id = ?`, 

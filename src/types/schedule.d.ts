@@ -7,4 +7,5 @@ export interface ScheduleEvent {
   type: EventType;
   title: string;
   allDay?: boolean;
+  color: string;
 }
