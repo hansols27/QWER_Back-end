@@ -7,7 +7,7 @@ const router = Router();
 // Multer 설정: 라우터의 고유 역할이므로 유지합니다.
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 20 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
         const allowedTypes = ["image/jpeg", "image/jpg", "image/png"];
         if (!allowedTypes.includes(file.mimetype)) {

@@ -6,7 +6,7 @@ import { NextFunction, Request, Response } from "express";
 import * as settingsController from "../controllers/settingsController";
 
 const router = Router();
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB 제한
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB 제한
 
 // ----------------------------------------------------
 // 1. Multer 설정 및 에러 핸들러 (라우터 계층의 역할)
