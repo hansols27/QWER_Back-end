@@ -13,13 +13,12 @@ const getErrorMessage = (err: unknown): string => {
     return "An unknown error occurred";
 };
 
-// URL 형식 유효성 검사 헬퍼 (http/https 시작 여부 확인 강화)
+// URL 형식 유효성 검사 헬퍼
 const isValidUrl = (url: string): boolean => {
-    // 프론트엔드와 마찬가지로, http:// 또는 https://로 시작해야 유효하다고 간주합니다.
+    // http:// 또는 https://로 시작해야 유효하다고 간주
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
         return false;
     }
-    // URL 생성자를 이용한 형식 검사
     try {
         new URL(url);
         return true;
@@ -32,9 +31,6 @@ const isValidUrl = (url: string): boolean => {
 // 2. 컨트롤러 함수
 // ----------------------------------------------------
 
-/**
- * 설정 조회
- */
 export const getSettings = async (req: Request, res: Response) => {
     try {
         const settings = await settingsService.getSettings();
@@ -54,7 +50,7 @@ export const saveSettings = async (req: Request, res: Response) => {
         const rawSnsLinks = req.body.snsLinks;
 
         if (rawSnsLinks) {
-            // ⭐️ 핵심 수정: rawSnsLinks의 타입에 따라 파싱 분기 처리 ⭐️
+            // ⭐️ SNS 링크 파싱: 배열 -> 문자열 순서로 체크하여 JSON 요청 우선 처리
             if (Array.isArray(rawSnsLinks)) {
                 // 1. JSON 요청 (express.json()에 의해 파싱된 배열 객체)
                 snsLinks = rawSnsLinks;
@@ -63,11 +59,9 @@ export const saveSettings = async (req: Request, res: Response) => {
                 try {
                     snsLinks = JSON.parse(rawSnsLinks);
                 } catch {
-                    // 유효한 JSON 문자열이 아님
                     return res.status(400).json({ success: false, message: "SNS links must be a valid JSON array string." });
                 }
             } else {
-                // 3. 배열도 문자열도 아닌 유효하지 않은 형태
                 return res.status(400).json({ success: false, message: "SNS links format is invalid or corrupted." });
             }
 
@@ -79,10 +73,8 @@ export const saveSettings = async (req: Request, res: Response) => {
             // --- 최종 유효성 검사 ---
             if (
                 !snsLinks.every(link => 
-                    // ID와 URL이 문자열이고 비어있지 않으며
                     typeof link.id === "string" && link.id.length > 0 && 
                     typeof link.url === "string" && link.url.length > 0 && 
-                    // URL 형식이 유효한지 확인
                     isValidUrl(link.url) 
                 )
             ) {
@@ -92,7 +84,6 @@ export const saveSettings = async (req: Request, res: Response) => {
 
         const file = req.file as Express.Multer.File | undefined;
         
-        // 파일과 SNS 링크를 서비스 레이어로 전달
         const settings = await settingsService.saveSettings(snsLinks, file);
 
         res.status(200).json({ success: true, data: settings });
@@ -102,9 +93,6 @@ export const saveSettings = async (req: Request, res: Response) => {
     }
 };
 
-/**
- * 메인 이미지 삭제
- */
 export const deleteMainImage = async (req: Request, res: Response) => {
     try {
         const deleted = await settingsService.deleteMainImage();

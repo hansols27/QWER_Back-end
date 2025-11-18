@@ -18,12 +18,10 @@ interface SettingsRow extends RowDataPacket {
 
 const TABLE_NAME = 'settings';
 
-// 💡 헬퍼 함수: S3 URL에서 키(Key)를 추출합니다. ('images/' 경로 처리)
 const extractS3Key = (url: string): string | null => {
   try {
     const urlParts = new URL(url);
-    const path = urlParts.pathname.substring(1); // 선행 '/' 제거
-    // 'images/...'로 시작하는 경로만 유효한 S3 키로 간주 (환경에 따라 수정 필요)
+    const path = urlParts.pathname.substring(1); 
     return path.startsWith('images/') ? path : null;
   } catch (e) {
     return null;
@@ -48,18 +46,15 @@ export async function getSettings(): Promise<SettingsData> {
 
   const row = rows[0];
 
-  // SNS 링크 JSON 문자열을 객체 배열로 파싱
   let snsLinks: SnsLink[] = [];
   if (row.snsLinks) {
     try {
-      // DB에 저장된 JSON 문자열이 유효하지 않을 경우를 대비한 방어 로직
       const parsed = JSON.parse(row.snsLinks);
       if (Array.isArray(parsed)) {
         snsLinks = parsed as SnsLink[];
       }
     } catch (e) {
       console.error('SNS Links JSON parsing error (DB Data):', e);
-      // 오류 발생 시 빈 배열 반환
     }
   }
 
@@ -70,10 +65,8 @@ export async function getSettings(): Promise<SettingsData> {
 }
 
 /**
- * 설정 저장/수정
- * 💡 개선: 파일이 없을 경우 (snsLinks만 저장하는 경우), 
- * 트랜잭션 내에서 기존 mainImage URL을 조회하여 보존합니다.
- */
+ * 설정 저장/수정
+ */
 export async function saveSettings(
   snsLinks: SnsLink[],
   file: Express.Multer.File | undefined
@@ -83,14 +76,12 @@ export async function saveSettings(
   try {
     await conn.beginTransaction();
 
-    // 1. 트랜잭션 내에서 현재 DB의 mainImage URL 조회 (LOCK 걸기)
     const [rows] = await conn.execute<SettingsRow[]>(
       `SELECT mainImage FROM ${TABLE_NAME} WHERE id = 1 FOR UPDATE`
     );
     
-    // 현재 mainImage URL을 초기값으로 설정 (레코드가 없으면 null, 있으면 그 값)
     let currentMainImage: string | null = rows.length > 0 ? rows[0].mainImage : null;
-    let newMainImageUrl: string = currentMainImage || ''; // 최종적으로 DB에 업데이트할 URL
+    let newMainImageUrl: string = currentMainImage || '';
 
     // 2. 새 파일 처리 (mainImage)
     if (file) {
@@ -118,7 +109,6 @@ export async function saveSettings(
         file.mimetype
       );
     } 
-    // 💡 else (파일이 없는 경우), newMainImageUrl은 초기값(currentMainImage || '')을 유지
 
     // 3. snsLinks 객체 배열을 JSON 문자열로 변환
     const snsLinksJson = JSON.stringify(snsLinks);
@@ -128,13 +118,14 @@ export async function saveSettings(
 
     // 4. DB에 UPSERT (id=1 고정 사용)
     await conn.execute<ResultSetHeader>(
+      // ⭐️ .trim()을 추가하여 SQL 구문 오류를 발생시키는 특수 공백을 제거합니다.
       `
-        INSERT INTO ${TABLE_NAME} (id, mainImage, snsLinks) VALUES (1, ?, ?)
-        ON DUPLICATE KEY UPDATE
-        mainImage = VALUES(mainImage),
-        snsLinks = VALUES(snsLinks),
-        updated_at = NOW()
-        `,
+      INSERT INTO ${TABLE_NAME} (id, mainImage, snsLinks) VALUES (1, ?, ?)
+      ON DUPLICATE KEY UPDATE
+      mainImage = VALUES(mainImage),
+      snsLinks = VALUES(snsLinks),
+      updated_at = NOW()
+      `.trim(),
       [dbMainImageUrl, snsLinksJson]
     );
 

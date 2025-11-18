@@ -51,7 +51,7 @@ router.post(
     (req: Request, res: Response, next: NextFunction) => {
         const contentType = req.headers['content-type'];
         
-        // 요청이 'multipart/form-data'로 시작하는 경우에만 Multer를 실행합니다.
+        // 요청이 'multipart/form-data'로 시작하는 경우에만 Multer 실행
         if (contentType && contentType.startsWith('multipart/form-data')) {
             upload.single('image')(req, res, (err) => {
                 if (err) {
@@ -66,10 +66,6 @@ router.post(
             next();
         }
     },
-    // 파일이 없는 JSON 요청이 이 함수에 도달할 때,
-    // req.body는 express.json()에 의해 이미 파싱된 배열 객체입니다.
-    // 파일이 있는 Multipart 요청이 이 함수에 도달할 때,
-    // req.body.snsLinks는 Multer에 의해 파싱된 문자열입니다.
     settingsController.saveSettings
 ); 
 
