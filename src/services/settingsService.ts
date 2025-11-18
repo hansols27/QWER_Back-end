@@ -70,8 +70,10 @@ export async function getSettings(): Promise<SettingsData> {
 }
 
 /**
- * 설정 저장/수정
- */
+ * 설정 저장/수정
+ * 💡 개선: 파일이 없을 경우 (snsLinks만 저장하는 경우), 
+ * 트랜잭션 내에서 기존 mainImage URL을 조회하여 보존합니다.
+ */
 export async function saveSettings(
   snsLinks: SnsLink[],
   file: Express.Multer.File | undefined
@@ -81,14 +83,20 @@ export async function saveSettings(
   try {
     await conn.beginTransaction();
 
-    const currentSettings = await getSettings();
-    let newMainImageUrl: string = currentSettings.mainImage || '';
+    // 1. 트랜잭션 내에서 현재 DB의 mainImage URL 조회 (LOCK 걸기)
+    const [rows] = await conn.execute<SettingsRow[]>(
+      `SELECT mainImage FROM ${TABLE_NAME} WHERE id = 1 FOR UPDATE`
+    );
+    
+    // 현재 mainImage URL을 초기값으로 설정 (레코드가 없으면 null, 있으면 그 값)
+    let currentMainImage: string | null = rows.length > 0 ? rows[0].mainImage : null;
+    let newMainImageUrl: string = currentMainImage || ''; // 최종적으로 DB에 업데이트할 URL
 
     // 2. 새 파일 처리 (mainImage)
     if (file) {
-      // 기존 이미지가 있다면 S3에서 삭제
-      if (currentSettings.mainImage) {
-        const oldKey = extractS3Key(currentSettings.mainImage);
+      // 2-1. 기존 이미지가 있다면 S3에서 삭제
+      if (currentMainImage) {
+        const oldKey = extractS3Key(currentMainImage);
         if (oldKey) {
           await deleteFromStorage(oldKey).catch((err) =>
             console.error('Old S3 deletion failed:', err)
@@ -100,23 +108,23 @@ export async function saveSettings(
         throw new Error('File buffer or mimetype is missing for upload.');
       }
 
-      // ⭐️ S3 Key 설정: 'images/main'으로 고정하고 확장자 추가
+      // 2-2. 새 이미지 S3 업로드
       const mimeTypeExtension = file.mimetype.split('/').pop() || 'png';
       const destPath = `images/main.${mimeTypeExtension}`;
 
-      // S3 URL이 반환될 것으로 가정
       newMainImageUrl = await uploadBufferToStorage(
         file.buffer,
         destPath,
         file.mimetype
       );
-    }
-    
+    } 
+    // 💡 else (파일이 없는 경우), newMainImageUrl은 초기값(currentMainImage || '')을 유지
+
     // 3. snsLinks 객체 배열을 JSON 문자열로 변환
     const snsLinksJson = JSON.stringify(snsLinks);
-    
-    // DB에 저장할 mainImage URL (빈 문자열이면 NULL로 변환)
-    const dbMainImageUrl = newMainImageUrl.length > 0 ? newMainImageUrl : null;
+    
+    // DB에 저장할 mainImage URL (빈 문자열이면 NULL로 변환)
+    const dbMainImageUrl = newMainImageUrl.length > 0 ? newMainImageUrl : null;
 
     // 4. DB에 UPSERT (id=1 고정 사용)
     await conn.execute<ResultSetHeader>(
@@ -127,7 +135,7 @@ export async function saveSettings(
         snsLinks = VALUES(snsLinks),
         updated_at = NOW()
         `,
-      [dbMainImageUrl, snsLinksJson] // 이미 null 처리가 되었으므로 || null 제거
+      [dbMainImageUrl, snsLinksJson]
     );
 
     await conn.commit();
