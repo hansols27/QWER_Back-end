@@ -117,15 +117,21 @@ export async function saveSettings(
     const dbMainImageUrl = newMainImageUrl.length > 0 ? newMainImageUrl : null;
 
     // 4. DB에 UPSERT (id=1 고정 사용)
-    await conn.execute<ResultSetHeader>(
-      // ⭐️ .trim()을 추가하여 SQL 구문 오류를 발생시키는 특수 공백을 제거합니다.
-      `
+    const upsertQuery = `
       INSERT INTO ${TABLE_NAME} (id, mainImage, snsLinks) VALUES (1, ?, ?)
       ON DUPLICATE KEY UPDATE
       mainImage = VALUES(mainImage),
       snsLinks = VALUES(snsLinks),
       updated_at = NOW()
-      `.trim(),
+    `;
+
+    // ⭐️ 쿼리 수정: 템플릿 리터럴을 trim() 한 후, 줄 바꿈과 탭/특수 공백을 정규식으로 제거 (핵심 해결책)
+    const cleanQuery = upsertQuery
+      .trim()
+      .replace(/\s+/g, ' '); // 연속된 공백, 탭, 줄 바꿈 문자를 하나의 공백으로 대체
+
+    await conn.execute<ResultSetHeader>(
+      cleanQuery, // 👈 정규식으로 정리된 쿼리 사용
       [dbMainImageUrl, snsLinksJson]
     );
 
