@@ -98,9 +98,11 @@ export async function createAlbum(
         // 1. S3에 커버 이미지 업로드 (Sharp를 이용한 리사이징 및 URL 클리닝 적용)
         if (file) {
             
-            // ⭐️⭐️ 수정된 리사이징 로직: 60% 비율 (384x288) 적용 ⭐️⭐️
+            // ⭐️⭐️ 수정된 리사이징 로직: 500*500의 80%인 400*400 (1:1 비율) 적용 ⭐️⭐️
             const resizedBuffer = await sharp(file.buffer)
-                .resize(384, 288, { fit: 'contain' }) // 640*0.6=384, 480*0.6=288
+                .resize(400, 400, { 
+                    fit: 'cover' // 크롭하여 400x400 크기로 강제 맞춤 (1:1 유지)
+                }) 
                 .toBuffer();
             // ⭐️⭐️ 수정된 부분 끝 ⭐️⭐️
             
@@ -189,9 +191,11 @@ export async function updateAlbum(
                 }
             }
             
-            // ⭐️⭐️ 수정된 리사이징 로직: 60% 비율 (384x288) 적용 ⭐️⭐️
+            // ⭐️⭐️ 수정된 리사이징 로직: 500*500의 80%인 400*400 (1:1 비율) 적용 ⭐️⭐️
             const resizedBuffer = await sharp(file.buffer) 
-                .resize(384, 288, { fit: 'contain' }) // 640*0.6=384, 480*0.6=288
+                .resize(400, 400, { 
+                    fit: 'cover' // 크롭하여 400x400 크기로 강제 맞춤 (1:1 유지)
+                }) 
                 .toBuffer();
             // ⭐️⭐️ 수정된 부분 끝 ⭐️⭐️
 
