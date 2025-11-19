@@ -3,7 +3,7 @@ import settingsRoutes from "./settings";
 import profileRoutes from "./members";
 import galleryRoutes from "./gallery";
 import noticeRoutes from "./notice";
-import scheduleRoutes from "./schedule";
+import scheduleRoutes from "./schedules";
 import albumRoutes from "./album";
 import videoRoutes from "./video";
 
@@ -22,7 +22,7 @@ router.use("/gallery", galleryRoutes);
 router.use("/notice", noticeRoutes);
 
 // /api/schedules
-router.use("/schedule", scheduleRoutes);
+router.use("/schedules", scheduleRoutes);
 
 // /api/albums
 router.use("/album", albumRoutes);
