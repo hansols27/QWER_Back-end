@@ -4,7 +4,7 @@ import { uploadBufferToStorage, deleteFromStorage } from "@utils/aws-s3-upload";
 import type { AlbumItem } from "@/types/album"; 
 import { v4 as uuidv4 } from "uuid";
 import type { Express } from 'express'; 
-import sharp from 'sharp'; // 이미지 리사이징을 위한 Sharp 임포트
+import sharp from 'sharp';
 
 const TABLE_NAME = "album"; 
 
@@ -40,14 +40,24 @@ const extractS3Key = (url: string): string | null => {
     }
 };
 
-// ⭐️ 추가된 헬퍼 함수: URL에서 쿼리 파라미터를 제거합니다.
+// ⭐️ 헬퍼 함수: URL에서 쿼리 파라미터를 제거합니다.
 const cleanImageUrl = (url: string): string => {
     return url.split('?')[0];
+};
+
+/**
+ * ⭐️ 새 헬퍼 함수: ISO 8601 날짜 문자열을 DB용 YYYY-MM-DD 형식으로 변환
+ */
+const toDatabaseDate = (isoString: string): string => {
+    // MySQL DATE 타입에 맞게 YYYY-MM-DD만 추출
+    return new Date(isoString).toISOString().substring(0, 10);
 };
 
 // ----------------------------------------------------
 // 2. DB 쿼리 실행 함수들 (CRUD)
 // ----------------------------------------------------
+
+// ... (getAlbums 및 getAlbumById 함수는 변경 없음)
 
 /**
  * 전체 앨범 조회
@@ -90,7 +100,7 @@ export async function createAlbum(
         // 1. S3에 커버 이미지 업로드 (Sharp를 이용한 리사이징 및 URL 클리닝 적용)
         if (file) {
             
-            // ⭐️ 이미지 리사이징 로직 (360x280)
+            // 이미지 리사이징 로직 (360x280)
             const resizedBuffer = await sharp(file.buffer)
                 .resize(360, 280, { fit: 'cover' })
                 .toBuffer();
@@ -99,16 +109,19 @@ export async function createAlbum(
             const mimeTypeExtension = file.mimetype.split('/').pop() || 'png';
             const destPath = `albums/${fileUUID}.${mimeTypeExtension}`;
             
-            // ⭐️ 리사이징된 버퍼를 사용하여 S3에 업로드
+            // 리사이징된 버퍼를 사용하여 S3에 업로드
             let uploadedUrl = await uploadBufferToStorage(resizedBuffer, destPath, file.mimetype);
             
-            // ⭐️ 핵심 수정: DB에 저장하기 전에 URL에서 파라미터를 제거하여 순수한 S3 경로만 저장
+            // DB에 저장하기 전에 URL에서 파라미터를 제거하여 순수한 S3 경로만 저장
             imageUrl = cleanImageUrl(uploadedUrl); 
         }
         
         // 2. DB 데이터 준비
         const newId = uuidv4(); 
         const tracksJson = JSON.stringify(data.tracks || []);
+        
+        // ⭐️ 날짜 형식 변환 적용 (생성 시에도 오류 방지)
+        const dbDate = data.date ? toDatabaseDate(data.date) : '';
         
         // 3. DB INSERT
         await conn.execute<ResultSetHeader>(
@@ -118,11 +131,11 @@ export async function createAlbum(
             [
                 newId, 
                 data.title, 
-                data.date, 
+                dbDate, // ⭐️ 변환된 날짜 사용
                 data.description || "", 
                 tracksJson, 
                 data.videoUrl || "", 
-                imageUrl // 클리닝된 URL 저장
+                imageUrl
             ]
         );
 
@@ -172,12 +185,13 @@ export async function updateAlbum(
             if (imageUrl) {
                 const oldKey = extractS3Key(imageUrl);
                 if (oldKey) {
+                    // 삭제 실패는 트랜잭션을 중단시키지 않음 (catch로 에러 처리)
                     await deleteFromStorage(oldKey).catch(err => console.error("Old S3 deletion failed:", err));
                 }
             }
             
-            // ⭐️ 이미지 리사이징 로직 (360x280)
-            const resizedBuffer = await sharp(file.buffer)
+            // ⭐️ 이미지 리사이징 로직 및 resizedBuffer 선언/할당
+            const resizedBuffer = await sharp(file.buffer) 
                 .resize(360, 280, { fit: 'cover' })
                 .toBuffer();
 
@@ -186,9 +200,10 @@ export async function updateAlbum(
             const mimeTypeExtension = file.mimetype.split('/').pop() || 'png';
             const destPath = `albums/${fileUUID}.${mimeTypeExtension}`;
             
+            // resizedBuffer 사용
             let uploadedUrl = await uploadBufferToStorage(resizedBuffer, destPath, file.mimetype);
             
-            // ⭐️ 핵심 수정: DB에 저장하기 전에 URL에서 파라미터를 제거하여 순수한 S3 경로만 저장
+            // DB에 저장하기 전에 URL에서 파라미터를 제거하여 순수한 S3 경로만 저장
             imageUrl = cleanImageUrl(uploadedUrl);
         }
 
@@ -200,7 +215,15 @@ export async function updateAlbum(
         for (const key of allowedKeys) {
             if (key in data && data[key] !== undefined) {
                 const value = data[key];
-                updateFields[key] = key === 'tracks' ? JSON.stringify(value) : value;
+                
+                // ⭐️ 핵심 수정: date 필드 변환 적용
+                if (key === 'date' && typeof value === 'string') {
+                    updateFields[key] = toDatabaseDate(value); // toDatabaseDate 헬퍼 사용
+                } else if (key === 'tracks') {
+                    updateFields[key] = JSON.stringify(value);
+                } else {
+                    updateFields[key] = value;
+                }
             }
         }
         updateFields.image = imageUrl; // 최종 이미지 URL 포함
