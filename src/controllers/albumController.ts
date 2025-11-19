@@ -50,12 +50,16 @@ export const createAlbum = async (req: Request, res: Response) => {
         }
         
         // ⭐️ req.file 타입 단언: Express.Multer.File 타입을 명시적으로 사용
-        const file = req.file as Express.Multer.File | undefined;
+        // ⭐️ 수정 사항: Multer로 업로드된 파일 정보를 서비스 계층으로 전달
+        const file = req.file as Express.Multer.File | undefined; 
+        
+        // ⭐️ 서비스 계층에서 이미지 리사이징 및 DB 저장 처리
         const album = await albumService.createAlbum(req.body, file);
         
         res.status(201).json({ success: true, data: album }); 
     } catch (err) {
         console.error("POST /album 오류:", err);
+        // 앨범 생성 실패 시, 업로드된 파일이 서비스에서 정리되었는지 확인 필요
         res.status(500).json({ success: false, message: `앨범 생성 실패: ${getErrorMessage(err)}` });
     }
 };
@@ -73,7 +77,10 @@ export const updateAlbum = async (req: Request, res: Response) => {
         }
         
         // ⭐️ req.file 타입 단언: Express.Multer.File 타입을 명시적으로 사용
+        // ⭐️ 수정 사항: Multer로 업로드된 파일 정보를 서비스 계층으로 전달
         const file = req.file as Express.Multer.File | undefined;
+        
+        // ⭐️ 서비스 계층에서 이미지 리사이징 및 DB 수정 처리
         const album = await albumService.updateAlbum(id, req.body, file);
         
         if (!album) return res.status(404).json({ success: false, message: "앨범을 찾을 수 없습니다." });
@@ -81,6 +88,7 @@ export const updateAlbum = async (req: Request, res: Response) => {
         res.json({ success: true, data: album });
     } catch (err) {
         console.error("PUT /album/:id 오류:", err);
+        // 앨범 수정 실패 시, 업로드된 새 파일이 서비스에서 정리되었는지 확인 필요
         res.status(500).json({ success: false, message: `앨범 수정 실패: ${getErrorMessage(err)}` });
     }
 };
