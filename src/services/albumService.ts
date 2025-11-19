@@ -3,13 +3,13 @@ import pool from "@config/db-config";
 import { uploadBufferToStorage, deleteFromStorage } from "@utils/aws-s3-upload";
 import type { AlbumItem } from "@/types/album"; 
 import { v4 as uuidv4 } from "uuid";
-import type { Express } from 'express'; // Multer File 타입 사용을 위해 임포트
-import sharp from 'sharp'; // ⭐️ 추가: 이미지 리사이징을 위한 Sharp 임포트
+import type { Express } from 'express'; 
+import sharp from 'sharp'; // 이미지 리사이징을 위한 Sharp 임포트
 
 const TABLE_NAME = "album"; 
 
 // ----------------------------------------------------
-// 1. 타입 정의 및 매핑 헬퍼 (기존 코드 유지)
+// 1. 타입 정의 및 매핑 헬퍼
 // ----------------------------------------------------
 
 // DB 로우 타입 정의
@@ -38,6 +38,11 @@ const extractS3Key = (url: string): string | null => {
     } catch (e) {
         return null;
     }
+};
+
+// ⭐️ 추가된 헬퍼 함수: URL에서 쿼리 파라미터를 제거합니다.
+const cleanImageUrl = (url: string): string => {
+    return url.split('?')[0];
 };
 
 // ----------------------------------------------------
@@ -82,21 +87,23 @@ export async function createAlbum(
 
         let imageUrl = "";
         
-        // 1. S3에 커버 이미지 업로드 (⭐️ 수정: Sharp를 이용한 리사이징 추가)
+        // 1. S3에 커버 이미지 업로드 (Sharp를 이용한 리사이징 및 URL 클리닝 적용)
         if (file) {
             
-            // ⭐️ 이미지 리사이징 로직
+            // ⭐️ 이미지 리사이징 로직 (360x280)
             const resizedBuffer = await sharp(file.buffer)
-                .resize(360, 280, { fit: 'cover' }) // 360x280으로 리사이징
+                .resize(360, 280, { fit: 'cover' })
                 .toBuffer();
-            // ⭐️ 리사이징된 버퍼를 S3 업로드 함수에 전달
             
             const fileUUID = uuidv4();
             const mimeTypeExtension = file.mimetype.split('/').pop() || 'png';
             const destPath = `albums/${fileUUID}.${mimeTypeExtension}`;
             
-            // ⭐️ file.buffer 대신 리사이징된 resizedBuffer를 사용
-            imageUrl = await uploadBufferToStorage(resizedBuffer, destPath, file.mimetype);
+            // ⭐️ 리사이징된 버퍼를 사용하여 S3에 업로드
+            let uploadedUrl = await uploadBufferToStorage(resizedBuffer, destPath, file.mimetype);
+            
+            // ⭐️ 핵심 수정: DB에 저장하기 전에 URL에서 파라미터를 제거하여 순수한 S3 경로만 저장
+            imageUrl = cleanImageUrl(uploadedUrl); 
         }
         
         // 2. DB 데이터 준비
@@ -115,7 +122,7 @@ export async function createAlbum(
                 data.description || "", 
                 tracksJson, 
                 data.videoUrl || "", 
-                imageUrl
+                imageUrl // 클리닝된 URL 저장
             ]
         );
 
@@ -159,7 +166,7 @@ export async function updateAlbum(
 
         let imageUrl = existingAlbum.image || "";
         
-        // 2. 이미지 처리 및 S3 업로드/삭제 (⭐️ 수정: Sharp를 이용한 리사이징 추가)
+        // 2. 이미지 처리 및 S3 업로드/삭제 (Sharp를 이용한 리사이징 및 URL 클리닝 적용)
         if (file) {
             // 기존 S3 이미지 삭제
             if (imageUrl) {
@@ -169,22 +176,23 @@ export async function updateAlbum(
                 }
             }
             
-            // ⭐️ 이미지 리사이징 로직
+            // ⭐️ 이미지 리사이징 로직 (360x280)
             const resizedBuffer = await sharp(file.buffer)
-                .resize(360, 280, { fit: 'cover' }) // 360x280으로 리사이징
+                .resize(360, 280, { fit: 'cover' })
                 .toBuffer();
-            // ⭐️ 리사이징된 버퍼를 S3 업로드 함수에 전달
 
             // 새 이미지 업로드
             const fileUUID = uuidv4();
             const mimeTypeExtension = file.mimetype.split('/').pop() || 'png';
             const destPath = `albums/${fileUUID}.${mimeTypeExtension}`;
             
-            // ⭐️ file.buffer 대신 리사이징된 resizedBuffer를 사용
-            imageUrl = await uploadBufferToStorage(resizedBuffer, destPath, file.mimetype);
+            let uploadedUrl = await uploadBufferToStorage(resizedBuffer, destPath, file.mimetype);
+            
+            // ⭐️ 핵심 수정: DB에 저장하기 전에 URL에서 파라미터를 제거하여 순수한 S3 경로만 저장
+            imageUrl = cleanImageUrl(uploadedUrl);
         }
 
-        // 3. 업데이트할 데이터 준비 (기존 코드 유지)
+        // 3. 업데이트할 데이터 준비
         const updateFields: { [key: string]: any } = {};
         const allowedKeys: Array<keyof Omit<AlbumItem, 'id' | 'createdAt'>> = 
             ['title', 'date', 'description', 'tracks', 'videoUrl'];
@@ -197,11 +205,11 @@ export async function updateAlbum(
         }
         updateFields.image = imageUrl; // 최종 이미지 URL 포함
 
-        // 4. MariaDB 업데이트 (기존 코드 유지)
+        // 4. MariaDB 업데이트
         const setClauses = Object.keys(updateFields).map(key => `${key} = ?`).join(', ');
         const values = Object.values(updateFields);
 
-        if (setClauses.length === 0) { // 업데이트할 내용이 없으면 (이미지만 교체되지 않았다면)
+        if (setClauses.length === 0) {
             await conn.rollback();
             return existingAlbum;
         }
@@ -225,7 +233,7 @@ export async function updateAlbum(
 }
 
 /**
- * 앨범 삭제 (DB 및 S3 파일 삭제) (기존 코드 유지)
+ * 앨범 삭제 (DB 및 S3 파일 삭제)
  */
 export async function deleteAlbum(id: string): Promise<void> {
     const conn = await pool.getConnection();
