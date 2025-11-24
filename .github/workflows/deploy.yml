@@ -11,13 +11,13 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Node.js 18.x # Node.js 버전 설정
+      - name: Set up Node.js 18.x
         uses: actions/setup-node@v3
         with:
           node-version: '18.x'
           cache: 'npm'
       
-      # Node.js 프로젝트의 빌드 명령이 있다면 실행 (없으면 이 단계는 삭제 가능)
+      # Node.js 프로젝트의 빌드 명령 실행
       - name: Install dependencies and Build
         run: |
           npm install
@@ -25,17 +25,20 @@ jobs:
 
       - name: Create deployment artifact (zip)
         # 배포에 필요한 모든 파일(appspec.yml, scripts, dist 폴더, package.json 등) 포함
-        run: zip -r deploy.zip . -x "*.git*"
+        # CodeDeploy 배포본에 포함되지 않아야 할 폴더/파일이 있다면 -x 옵션을 추가하세요. (예: node_modules)
+        run: zip -r deploy.zip . -x "*.git*" "node_modules/*"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          # AWS_REGION은 다음 단계의 s3 cp 명령에서 자동으로 사용됩니다.
+          aws-region: ${{ secrets.AWS_REGION }} 
           
       - name: Upload zip to S3
-        run: aws s3 cp --region ${{ secrets.AWS_REGION }} ./deploy.zip s3://${{ secrets.S3_BUCKET_NAME }}/
+        # Exit Code 252의 주요 원인인 --region 파라미터를 제거했습니다.
+        run: aws s3 cp ./deploy.zip s3://${{ secrets.S3_BUCKET_NAME }}/
 
       - name: Start CodeDeploy deployment
         run: |
