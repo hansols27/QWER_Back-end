@@ -42,21 +42,31 @@ export const createSchedule = async (
 ): Promise<{ id: string }> => {
     const id = uuidv4();
     
+    // ⭐️ 수정: 클라이언트에서 문자열로 넘어올 수 있는 data.start/end를 안전하게 Date 객체로 변환
+    const startDate = new Date(data.start);
+    const endDate = new Date(data.end);
+
+    // 유효성 검사
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        throw new Error("유효하지 않은 시작/종료 날짜 형식입니다.");
+    }
+    
     // Date 객체와 boolean 값을 DB에 맞게 문자열/number로 변환
     const values = [
         id,
         data.title,
-        data.start.toISOString(),
-        data.end.toISOString(),
+        startDate.toISOString(),
+        endDate.toISOString(),
         Number(data.allDay), 
         data.color, 
+        data.type, // type 추가
     ];
     
     // 쿼리 실행
     await pool.execute<ResultSetHeader>(
         `INSERT INTO ${TABLE_NAME} 
-        (id, title, start, end, allDay, color) 
-        VALUES (?, ?, ?, ?, ?, ?)`,
+        (id, title, start, end, allDay, color, type) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
         values
     );
 
@@ -67,12 +77,11 @@ export const createSchedule = async (
  * 모든 스케줄 조회 (start 시간 기준 오름차순)
  */
 export const getAllSchedules = async (): Promise<ScheduleEvent[]> => {
-    // SQL 쿼리 실행
+    // 쿼리에 type 필드 추가
     const [rows] = await pool.execute<ScheduleRow[]>(
-        `SELECT id, title, start, end, allDay, color FROM ${TABLE_NAME} ORDER BY start ASC`
+        `SELECT id, title, start, end, allDay, color, type FROM ${TABLE_NAME} ORDER BY start ASC`
     );
     
-    // 헬퍼 함수를 사용하여 타입에 맞게 매핑
     return rows.map(mapRowToScheduleEvent);
 };
 
@@ -80,15 +89,14 @@ export const getAllSchedules = async (): Promise<ScheduleEvent[]> => {
  * 단일 스케줄 조회
  */
 export const getScheduleById = async (id: string): Promise<ScheduleEvent | null> => {
-    // WHERE 조건에 id 사용
+    // 쿼리에 type 필드 추가
     const [rows] = await pool.execute<ScheduleRow[]>(
-        `SELECT id, title, start, end, allDay, color FROM ${TABLE_NAME} WHERE id = ?`, 
+        `SELECT id, title, start, end, allDay, color, type FROM ${TABLE_NAME} WHERE id = ?`, 
         [id]
     );
 
     if (rows.length === 0) return null;
     
-    // 헬퍼 함수를 사용하여 타입에 맞게 매핑
     return mapRowToScheduleEvent(rows[0]);
 };
 
@@ -102,23 +110,30 @@ export const updateSchedule = async (
     
     const dataForDb: { [key: string]: any } = {};
     
-    // ⭐️ TS7053 오류 수정: Object.keys의 결과를 data의 실제 키 타입으로 명시적으로 캐스팅합니다.
     const keysToUpdate = Object.keys(data) as Array<keyof typeof data>;
 
     for (const key of keysToUpdate) {
-        // key는 data에 존재하는 것이 보장됨
         const value = data[key]; 
         
-        // Partial 타입이므로 값이 undefined일 수 있습니다.
         if (value === undefined) continue; 
         
-        if (value instanceof Date) {
-            // Date 객체는 ISO string으로 변환
-            dataForDb[key] = value.toISOString();
-        } else if (typeof value === 'boolean') {
-            // boolean은 0 또는 1로 변환
-            dataForDb[key] = Number(value); 
+        // ⭐️ 수정: key에 따라 타입을 좁히고 처리 로직 분리
+        if (key === 'start' || key === 'end') {
+            // value가 Date 객체라면 그대로, 문자열이라면 new Date()로 변환 시도
+            // new Date()에 string | number 타입만 전달되도록 타입 단언 사용
+            const dateValue = value instanceof Date ? value : new Date(value as string | number);
+            
+            if (isNaN(dateValue.getTime())) {
+                throw new Error(`유효하지 않은 날짜 형식입니다: ${key}`);
+            }
+            dataForDb[key] = dateValue.toISOString();
+            
+        } else if (key === 'allDay') { 
+            // allDay는 boolean 타입 (혹은 Partial에 의해 boolean이 아닐 수 있으나, boolean으로 가정)
+            dataForDb[key] = Number(value as boolean); 
+            
         } else {
+            // title, type, color 등 문자열 값
             dataForDb[key] = value;
         }
     }
