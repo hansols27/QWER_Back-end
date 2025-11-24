@@ -1,0 +1,26 @@
+version: 0.0
+os: linux
+files:
+  - source: /
+    destination: /root/QWER_Back-end
+permissions:
+  - object: /
+    pattern: "**"
+    owner: root
+    group: root
+hooks:
+  BeforeInstall:
+    - location: scripts/stop_server.sh
+      timeout: 60
+      runas: root
+  AfterInstall:
+    - location: scripts/install_dependencies.sh
+      timeout: 300
+      runas: root
+    - location: scripts/daemon_reload.sh # <-- 추가: 서비스 파일 변경 후 필수
+      timeout: 30
+      runas: root
+  ApplicationStart:
+    - location: scripts/start_server.sh # 재시작 명령으로 변경
+      timeout: 60
+      runas: root
