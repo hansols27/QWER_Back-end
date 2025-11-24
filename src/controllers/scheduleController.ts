@@ -17,12 +17,13 @@ const getErrorMessage = (err: unknown): string => {
  */
 export const createSchedule = async (req: Request, res: Response) => {
     try {
-        const data = req.body as Omit<ScheduleEvent, 'id'>;
+        // ⭐️ 수정: Omit 타입에 'color'를 추가하여, 클라이언트 입력 데이터에서 제외합니다.
+        const data = req.body as Omit<ScheduleEvent, 'id' | 'color'>;
         
         // 1. 서비스에서 ID를 생성하여 스케줄 저장
         await scheduleService.createSchedule(data); 
         
-        // 2. ⭐️ 수정: 저장 후 업데이트된 전체 스케줄 목록을 조회합니다.
+        // 2. 저장 후 업데이트된 전체 스케줄 목록을 조회합니다.
         const schedules = await scheduleService.getAllSchedules();
         
         // 생성 완료 시 201 Created와 업데이트된 목록 반환
@@ -78,7 +79,8 @@ export const getSchedule = async (req: Request, res: Response) => {
 export const updateSchedule = async (req: Request, res: Response) => {
     try {
         const id = req.params.id;
-        const data = req.body as Partial<Omit<ScheduleEvent, 'id'>>;
+        // Partial<Omit<ScheduleEvent, 'id'>>는 color를 수정할 수 있도록 허용합니다. (Type 변경 시 color 자동 업데이트 로직과 충돌 없음)
+        const data = req.body as Partial<Omit<ScheduleEvent, 'id'>>; 
         
         // 1. 서비스에서 affectedRows를 받아 대상이 있었는지 확인합니다.
         const affectedRows = await scheduleService.updateSchedule(id, data);
@@ -87,7 +89,7 @@ export const updateSchedule = async (req: Request, res: Response) => {
             return res.status(404).json({ success: false, message: '수정할 스케줄을 찾을 수 없습니다.' });
         }
         
-        // 2. ⭐️ 수정: 수정 후 업데이트된 전체 스케줄 목록을 조회합니다.
+        // 2. 수정 후 업데이트된 전체 스케줄 목록을 조회합니다.
         const schedules = await scheduleService.getAllSchedules();
         
         // 수정 완료 시 200 OK와 업데이트된 목록 반환
@@ -115,7 +117,7 @@ export const deleteSchedule = async (req: Request, res: Response) => {
             return res.status(404).json({ success: false, message: '삭제할 스케줄을 찾을 수 없습니다.' });
         }
         
-        // 2. ⭐️ 수정: 삭제 후 업데이트된 전체 스케줄 목록을 조회합니다.
+        // 2. 삭제 후 업데이트된 전체 스케줄 목록을 조회합니다.
         const schedules = await scheduleService.getAllSchedules();
         
         // 삭제 완료 시 200 OK와 업데이트된 목록 반환

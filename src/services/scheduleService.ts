@@ -1,13 +1,13 @@
 // ⭐️ 생성한 DB 연결 풀 모듈 임포트 경로 확인
 import pool from "@config/db-config"; 
-import type { ScheduleEvent } from '@/types/schedule';
+import type { ScheduleEvent, EventType } from '@/types/schedule'; 
 import { v4 as uuidv4 } from 'uuid'; 
 import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 
 const TABLE_NAME = "schedules"; // MariaDB 테이블 이름
 
 // ----------------------------------------------------
-// 1. 타입 정의 및 매핑 헬퍼
+// 1. 타입 정의 및 헬퍼 함수
 // ----------------------------------------------------
 
 // DB에서 반환될 스케줄 로우 타입 정의
@@ -29,6 +29,20 @@ const mapRowToScheduleEvent = (row: ScheduleRow): ScheduleEvent => ({
     allDay: Boolean(row.allDay)
 });
 
+// ⭐️ 일정 유형에 따라 색상 결정 헬퍼 함수
+const getColorByType = (type: EventType): string => {
+    switch (type) {
+        case 'B': // Birthday
+            return '#ff9800'; 
+        case 'C': // Concert
+            return '#2196f3';
+        case 'E': // Event
+            return '#4caf50';
+        default:
+            return '#9e9e9e'; // 기본값 (회색)
+    }
+}
+
 
 // ----------------------------------------------------
 // 2. DB 쿼리 실행 함수들
@@ -38,28 +52,33 @@ const mapRowToScheduleEvent = (row: ScheduleRow): ScheduleEvent => ({
  * 스케줄 생성
  */
 export const createSchedule = async (
-    data: Omit<ScheduleEvent, 'id'>
+    data: Omit<ScheduleEvent, 'id' | 'color'>
 ): Promise<{ id: string }> => {
     const id = uuidv4();
     
-    // ⭐️ 수정: 클라이언트에서 문자열로 넘어올 수 있는 data.start/end를 안전하게 Date 객체로 변환
-    const startDate = new Date(data.start);
-    const endDate = new Date(data.end);
+    // ⭐️ 수정: 시간대 문제 해결. 날짜 문자열에 UTC 자정 시간을 강제 지정하여 Date 객체 생성
+    const startString = data.start.toString().substring(0, 10); 
+    const endString = data.end.toString().substring(0, 10);
+    
+    const startDate = new Date(`${startString}T00:00:00Z`);
+    const endDate = new Date(`${endString}T00:00:00Z`);
 
-    // 유효성 검사
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
         throw new Error("유효하지 않은 시작/종료 날짜 형식입니다.");
     }
+
+    // type에 기반하여 색상을 자동 결정
+    const color = getColorByType(data.type);
     
-    // Date 객체와 boolean 값을 DB에 맞게 문자열/number로 변환
+    // ⭐️ 오류 해결: 바인드 변수에 undefined가 들어가지 않도록 null로 대체
     const values = [
         id,
-        data.title,
-        startDate.toISOString(),
+        data.title || null,
+        startDate.toISOString(), // UTC 00:00:00으로 저장
         endDate.toISOString(),
         Number(data.allDay), 
-        data.color, 
-        data.type, // type 추가
+        color, // 결정된 color 값 사용
+        data.type || null, 
     ];
     
     // 쿼리 실행
@@ -74,14 +93,12 @@ export const createSchedule = async (
 };
 
 /**
- * 모든 스케줄 조회 (start 시간 기준 오름차순)
+ * 모든 스케줄 조회
  */
 export const getAllSchedules = async (): Promise<ScheduleEvent[]> => {
-    // 쿼리에 type 필드 추가
     const [rows] = await pool.execute<ScheduleRow[]>(
         `SELECT id, title, start, end, allDay, color, type FROM ${TABLE_NAME} ORDER BY start ASC`
     );
-    
     return rows.map(mapRowToScheduleEvent);
 };
 
@@ -89,7 +106,6 @@ export const getAllSchedules = async (): Promise<ScheduleEvent[]> => {
  * 단일 스케줄 조회
  */
 export const getScheduleById = async (id: string): Promise<ScheduleEvent | null> => {
-    // 쿼리에 type 필드 추가
     const [rows] = await pool.execute<ScheduleRow[]>(
         `SELECT id, title, start, end, allDay, color, type FROM ${TABLE_NAME} WHERE id = ?`, 
         [id]
@@ -105,8 +121,8 @@ export const getScheduleById = async (id: string): Promise<ScheduleEvent | null>
  */
 export const updateSchedule = async (
     id: string,
-    data: Partial<Omit<ScheduleEvent, 'id'>>
-): Promise<number> => { // affectedRows 반환
+    data: Partial<Omit<ScheduleEvent, 'id'>> 
+): Promise<number> => { 
     
     const dataForDb: { [key: string]: any } = {};
     
@@ -117,24 +133,41 @@ export const updateSchedule = async (
         
         if (value === undefined) continue; 
         
-        // ⭐️ 수정: key에 따라 타입을 좁히고 처리 로직 분리
+        // start/end 날짜 처리 (시간대 문제 방지 로직 적용)
         if (key === 'start' || key === 'end') {
-            // value가 Date 객체라면 그대로, 문자열이라면 new Date()로 변환 시도
-            // new Date()에 string | number 타입만 전달되도록 타입 단언 사용
-            const dateValue = value instanceof Date ? value : new Date(value as string | number);
+            // ⭐️ 수정: Date 객체가 아닌 날짜 문자열이 들어올 경우, UTC 자정으로 변환 후 저장
+            let dateValue: Date;
+            if (value instanceof Date) {
+                dateValue = value;
+            } else {
+                const dateString = value.toString().substring(0, 10);
+                dateValue = new Date(`${dateString}T00:00:00Z`);
+            }
             
             if (isNaN(dateValue.getTime())) {
                 throw new Error(`유효하지 않은 날짜 형식입니다: ${key}`);
             }
             dataForDb[key] = dateValue.toISOString();
             
-        } else if (key === 'allDay') { 
-            // allDay는 boolean 타입 (혹은 Partial에 의해 boolean이 아닐 수 있으나, boolean으로 가정)
+        } 
+        // allDay 처리
+        else if (key === 'allDay') { 
             dataForDb[key] = Number(value as boolean); 
             
-        } else {
-            // title, type, color 등 문자열 값
-            dataForDb[key] = value;
+        }
+        // ⭐️ type이 수정될 경우 color도 함께 업데이트
+        else if (key === 'type') {
+            const newType = value as EventType;
+            dataForDb[key] = newType;
+            // type이 수정되면 color도 업데이트
+            dataForDb['color'] = getColorByType(newType); 
+        }
+        // title, color (단순 문자열) 처리
+        else {
+            // color 필드는 type 변경시 자동으로 업데이트 되나, 혹시 모를 direct 업데이트 방지
+            if(key === 'color') continue; 
+            
+            dataForDb[key] = value || null; // null 처리
         }
     }
     
@@ -142,30 +175,25 @@ export const updateSchedule = async (
 
     if (dataEntries.length === 0) return 0;
 
-    // SET 구문 생성을 위한 키-값 배열 준비
     const setClauses = dataEntries.map(([key]) => `${key} = ?`).join(', ');
     const values = dataEntries.map(([, value]) => value);
     
-    // UPDATE 쿼리 실행
     const [result] = await pool.execute<ResultSetHeader>(
         `UPDATE ${TABLE_NAME} SET ${setClauses} WHERE id = ?`, 
-        [...values, id] // 값 배열 뒤에 WHERE 조건인 id 추가
+        [...values, id]
     );
     
-    // affectedRows 반환
     return result.affectedRows;
 };
 
 /**
  * 스케줄 삭제
  */
-export const deleteSchedule = async (id: string): Promise<number> => { // affectedRows 반환
-    // DELETE 쿼리 실행
+export const deleteSchedule = async (id: string): Promise<number> => {
     const [result] = await pool.execute<ResultSetHeader>(
         `DELETE FROM ${TABLE_NAME} WHERE id = ?`, 
         [id]
     );
     
-    // affectedRows 반환
     return result.affectedRows;
 };
