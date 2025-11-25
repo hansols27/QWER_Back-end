@@ -8,7 +8,7 @@ const TABLE_NAME = "notice"; // MariaDB 테이블 이름
 
 interface NoticeRow extends Omit<Notice, 'createdAt' | 'updatedAt'>, RowDataPacket {
     createdAt: Date; 
-    // ⭐ 수정: DB에 'updatedAt' 컬럼이 없거나 NULL일 수 있으므로 선택적 필드로 변경
+    // DB에 'updatedAt' 컬럼이 없다고 가정하고 선택적 필드로 유지
     updatedAt?: Date; 
 }
 
@@ -18,7 +18,7 @@ const mapRowToNotice = (row: NoticeRow): Notice => ({
     id: row.id,
     // DB의 Date 객체를 Notice 타입의 예상 타입인 string으로 변환
     createdAt: row.createdAt.toISOString(),
-    // ⭐ 수정: updatedAt이 없거나 null이면 createdAt 값을 대신 사용 (createdAt을 기준으로 정렬하기 위함)
+    // updatedAt이 없거나 null이면 createdAt 값을 대신 사용 (createdAt을 기준으로 정렬하기 위함)
     updatedAt: row.updatedAt ? row.updatedAt.toISOString() : row.createdAt.toISOString(),
 });
 
@@ -57,7 +57,6 @@ export async function getNotice(id: string): Promise<Notice | null> {
  * 공지사항 등록
  */
 export async function createNotice(
-    // 💡 data 타입 정리: Notice에서 ID, Time 필드를 제외한 타입을 사용
     data: Omit<Notice, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<Notice> {
     const { type, title, content } = data;
@@ -65,10 +64,9 @@ export async function createNotice(
     // 1. UUID 생성 (VARCHAR 기본 키 사용)
     const id = uuidv4();
     
+    // ⭐ [핵심 수정]: SQL 구문 오류 방지를 위해 쿼리를 단일 라인으로 정리합니다.
     await pool.execute<ResultSetHeader>(
-        // ⭐ [핵심 수정]: DB 오류 로그에 따라 'updatedAt' 컬럼을 쿼리에서 제거합니다.
-        `INSERT INTO ${TABLE_NAME} (id, type, title, content, createdAt) 
-         VALUES (?, ?, ?, ?, NOW())`, 
+        `INSERT INTO ${TABLE_NAME} (id, type, title, content, createdAt) VALUES (?, ?, ?, ?, NOW())`, 
         [id, type, title, content]
     );
 
@@ -87,7 +85,6 @@ export async function createNotice(
  */
 export async function updateNotice(
     id: string,
-    // 💡 data 타입 정리: Notice에서 ID, Time 필드를 제외한 타입의 Partial
     data: Partial<Omit<Notice, 'id' | 'createdAt' | 'updatedAt'>>
 ): Promise<number> {
     
@@ -103,8 +100,8 @@ export async function updateNotice(
     const values = dataEntries.map(([, value]) => value);
     
     // UPDATE 쿼리 실행
+    // ⭐ [수정]: 쿼리를 단일 라인으로 정리합니다.
     const [result] = await pool.execute<ResultSetHeader>(
-        // ⭐ [핵심 수정]: DB 오류 로그에 따라 'updatedAt = NOW()'도 제거합니다.
         `UPDATE ${TABLE_NAME} SET ${setClauses} WHERE id = ?`, 
         [...values, id]
     );
