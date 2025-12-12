@@ -105,17 +105,17 @@ export const uploadGalleryImages = async (files: Express.Multer.File[]): Promise
 };
 
 /**
- * 이미지 및 DB 데이터 삭제
+ * 다중 이미지 삭제
+ * @param ids 삭제할 갤러리 ID 배열
  */
-export const deleteGalleryImage = async (id: string): Promise<void> => {
+export const deleteGallery = async (id: string): Promise<void> => {
     const conn = await pool.getConnection();
 
     try {
         await conn.beginTransaction();
 
-        // 🔹 1. MariaDB에서 이미지 URL 조회
-        const [rows] = await conn.execute<GalleryRow[]>( // conn.execute 사용
-            `SELECT url FROM ${TABLE_NAME} WHERE id = ?`, 
+        const [rows] = await conn.execute<RowDataPacket[]>(
+            `SELECT url FROM ${TABLE_NAME} WHERE id = ?`,
             [id]
         );
 
@@ -123,36 +123,52 @@ export const deleteGalleryImage = async (id: string): Promise<void> => {
             await conn.rollback();
             throw new Error(`Gallery item not found: ${id}`);
         }
-        const fileUrl = rows[0].url;
-        const s3Key = extractS3Key(fileUrl); // 💡 키 추출 함수 사용
 
-        // 🔹 2. AWS S3에서 파일 삭제
+        const fileUrl = rows[0].url;
+        const s3Key = fileUrl ? fileUrl.split("/").slice(-2).join("/") : null;
+
         if (s3Key) {
             try {
-                await deleteFromStorage(s3Key); // 💡 S3 Key를 전달
+                await deleteFromStorage(s3Key);
             } catch (err) {
                 console.error("Failed to delete file from S3:", s3Key, err);
-                // S3 삭제 실패는 로그 기록 후 진행 (DB 삭제는 시도)
             }
-        } else {
-            console.warn(`Could not extract S3 key from URL: ${fileUrl}`);
         }
 
-        // 🔹 3. MariaDB 문서 삭제
-        await conn.execute(
-            `DELETE FROM ${TABLE_NAME} WHERE id = ?`, 
-            [id]
-        );
-        
+        await conn.execute(`DELETE FROM ${TABLE_NAME} WHERE id = ?`, [id]);
         await conn.commit();
-        
-    } catch (error) {
+    } catch (err) {
         await conn.rollback();
-        console.error("deleteGalleryImage transaction failed:", error);
-        // 이미 Gallery item not found 오류는 위에서 처리했으므로, 
-        // 트랜잭션 오류만 다시 던집니다.
-        throw error; 
+        console.error("deleteGallery transaction failed:", err);
+        throw err;
     } finally {
         conn.release();
     }
+};
+
+// --------------------
+// 다중 이미지 삭제
+// --------------------
+export const deleteMultipleGallery = async (ids: string[]): Promise<string[]> => {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+
+    const deletedIds: string[] = [];
+
+    for (const id of ids) {
+        try {
+            await deleteGallery(id);
+            deletedIds.push(id);
+        } catch (err) {
+            const message = (err as Error).message;
+            if (message.includes("Gallery item not found")) {
+                console.warn(`Gallery item not found: ${id}`);
+                continue;
+            } else {
+                console.error(`Error deleting ID ${id}:`, err);
+                continue;
+            }
+        }
+    }
+
+    return deletedIds;
 };

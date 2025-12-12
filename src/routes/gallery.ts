@@ -36,18 +36,12 @@ router.get("/", galleryController.getGallery);
 // ⭐️ Multer 미들웨어로 파일을 받고 컨트롤러로 전달합니다.
 router.post("/upload", upload.array("images"), galleryController.uploadGallery);
 
-// ----------------------------------------------------
-// 4. 이미지 교체 (PUT은 일반적으로 전체 리소스 교체에 사용되나, 여기서는 파일 교체 로직을 따름)
-// ----------------------------------------------------
-// PUT /api/gallery/:id
-// 🚨 이미지 교체 로직은 'update' 기능으로 간주하며, 컨트롤러에서 ID를 처리합니다.
-// Multer 미들웨어를 통해 단일 파일을 받습니다.
-router.put("/:id", upload.single("image"), galleryController.uploadGallery); 
+// 다중 삭제 (DELETE /api/gallery)
+router.delete("/", galleryController.deleteMultipleGallery);
 
-// ----------------------------------------------------
-// 5. 이미지 삭제
-// ----------------------------------------------------
-// DELETE /api/gallery/:id
+// 단일 삭제 (DELETE /api/gallery/:id)
 router.delete("/:id", galleryController.deleteGallery);
+
+
 
 export default router;
