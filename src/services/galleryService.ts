@@ -104,16 +104,16 @@ export const uploadGalleryImages = async (files: Express.Multer.File[]): Promise
     return uploadedItems;
 };
 
-/**
- * 다중 이미지 삭제
- * @param ids 삭제할 갤러리 ID 배열
- */
+// --------------------
+// 단일 이미지 삭제
+// --------------------
 export const deleteGallery = async (id: string): Promise<void> => {
     const conn = await pool.getConnection();
 
     try {
         await conn.beginTransaction();
 
+        // 1. DB에서 URL 조회
         const [rows] = await conn.execute<RowDataPacket[]>(
             `SELECT url FROM ${TABLE_NAME} WHERE id = ?`,
             [id]
@@ -125,18 +125,33 @@ export const deleteGallery = async (id: string): Promise<void> => {
         }
 
         const fileUrl = rows[0].url;
-        const s3Key = fileUrl ? fileUrl.split("/").slice(-2).join("/") : null;
 
+        // 2. 정확한 S3 Key 추출
+        let s3Key: string | null = null;
+        try {
+            const urlObj = new URL(fileUrl);
+            s3Key = urlObj.pathname.startsWith('/') ? urlObj.pathname.slice(1) : urlObj.pathname;
+        } catch (e) {
+            console.warn("Failed to parse S3 URL:", fileUrl, e);
+        }
+
+        // 3. S3 파일 삭제
         if (s3Key) {
             try {
                 await deleteFromStorage(s3Key);
             } catch (err) {
                 console.error("Failed to delete file from S3:", s3Key, err);
+                // 필요 시 throw 해서 롤백 가능
+                // throw err;
             }
+        } else {
+            console.warn("S3 key not found for URL:", fileUrl);
         }
 
+        // 4. DB에서 항목 삭제
         await conn.execute(`DELETE FROM ${TABLE_NAME} WHERE id = ?`, [id]);
         await conn.commit();
+
     } catch (err) {
         await conn.rollback();
         console.error("deleteGallery transaction failed:", err);
