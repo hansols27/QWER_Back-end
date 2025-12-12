@@ -1,39 +1,36 @@
 import { Pool, ResultSetHeader, RowDataPacket } from "mysql2/promise";
-import pool from "@config/db-config"; 
-import { uploadBufferToStorage, deleteFromStorage } from "@utils/aws-s3-upload"; 
-import type { GalleryItem } from "@/types/gallery"; 
+import pool from "@config/db-config";
+import { uploadBufferToStorage, deleteFromStorage } from "@utils/aws-s3-upload";
+import type { GalleryItem } from "@/types/gallery";
 import { v4 as uuidv4 } from "uuid";
-import type { Express } from 'express'; 
+import type { Express } from 'express';
 
-const TABLE_NAME = "gallery"; 
+const TABLE_NAME = "gallery";
 
 // ----------------------------------------------------
 // 1. 타입 정의 및 매핑 헬퍼
 // ----------------------------------------------------
 
-// DB 로우 타입 정의
 interface GalleryRow extends Omit<GalleryItem, 'id' | 'createdAt'>, RowDataPacket {
-    id: string; // DB의 VARCHAR(36)
-    createdAt: Date; // DB에서 DATETIME을 조회할 때 반환되는 Date 객체
+    id: string;
+    createdAt: Date;
 }
 
-// 헬퍼 함수: DB Row를 GalleryItem 타입으로 변환
 const mapRowToGalleryItem = (row: GalleryRow): GalleryItem => ({
     ...row,
     id: row.id,
     url: row.url,
-    createdAt: row.createdAt.toISOString(), 
+    createdAt: row.createdAt.toISOString(),
 });
 
-// 💡 S3 URL에서 키(Key)를 추출하는 헬퍼 함수 (deleteFromStorage에 전달하기 위해)
+// S3 URL에서 Key 추출
 const extractS3Key = (url: string): string | null => {
     try {
-        const urlParts = new URL(url);
-        // path.substring(1)은 `/`를 제거
-        const path = urlParts.pathname.substring(1); 
-        // 갤러리 키가 'gallery/'로 시작하는지 확인 (선택 사항)
+        const urlObj = new URL(url);
+        const path = urlObj.pathname.replace(/^\/+/, ''); // 앞 슬래시 제거
         return path.startsWith('gallery/') ? path : null;
     } catch (e) {
+        console.warn('Failed to parse S3 URL:', url, e);
         return null;
     }
 };
@@ -42,56 +39,40 @@ const extractS3Key = (url: string): string | null => {
 // 2. DB 쿼리 실행 함수들 (CRUD)
 // ----------------------------------------------------
 
-/**
- * 갤러리 목록 조회
- */
+// 갤러리 목록 조회
 export const getGalleryItems = async (): Promise<GalleryItem[]> => {
     const [rows] = await pool.execute<GalleryRow[]>(
         `SELECT id, url, createdAt FROM ${TABLE_NAME} ORDER BY createdAt DESC`
     );
-
     return rows.map(mapRowToGalleryItem);
 };
 
-/**
- * 이미지 업로드 및 DB 등록
- */
+// 이미지 업로드
 export const uploadGalleryImages = async (files: Express.Multer.File[]): Promise<GalleryItem[]> => {
     if (!files || files.length === 0) return [];
 
     const uploadedItems: GalleryItem[] = [];
-    const conn = await pool.getConnection(); // 💡 다중 파일 처리를 위해 트랜잭션 사용
+    const conn = await pool.getConnection();
 
     try {
         await conn.beginTransaction();
 
         for (const file of files) {
-            // 파일 이름 및 경로 생성
             const fileUUID = uuidv4();
-            const mimeTypeExtension = file.mimetype.split('/').pop() || 'png';
-            const fileName = `gallery/${fileUUID}.${mimeTypeExtension}`; // S3 Key
-            
-            let url = "";
+            const ext = file.mimetype.split('/').pop() || 'png';
+            const fileName = `gallery/${fileUUID}.${ext}`;
 
-            // 🔹 1. AWS S3에 파일 업로드
-            try {
-                url = await uploadBufferToStorage(file.buffer, fileName, file.mimetype);
-            } catch (err) {
-                console.error("Failed to upload file to S3:", file.originalname, err);
-                throw err; // S3 업로드 실패 시 전체 트랜잭션 롤백
-            }
+            const url = await uploadBufferToStorage(file.buffer, fileName, file.mimetype);
 
-            // 🔹 2. MariaDB에 메타데이터 저장
-            const newId = uuidv4(); // 새 UUID 생성
-            await conn.execute<ResultSetHeader>( // conn.execute 사용
+            const newId = uuidv4();
+            await conn.execute<ResultSetHeader>(
                 `INSERT INTO ${TABLE_NAME} (id, url, createdAt) VALUES (?, ?, NOW())`,
                 [newId, url]
             );
-            
-            // 삽입된 항목 반환 (createdAt은 임시로 현재 시각 사용)
+
             uploadedItems.push({ id: newId, url, createdAt: new Date().toISOString() });
         }
-        
+
         await conn.commit();
     } catch (error) {
         await conn.rollback();
@@ -113,7 +94,6 @@ export const deleteGallery = async (id: string): Promise<void> => {
     try {
         await conn.beginTransaction();
 
-        // 1. DB에서 URL 조회
         const [rows] = await conn.execute<RowDataPacket[]>(
             `SELECT url FROM ${TABLE_NAME} WHERE id = ?`,
             [id]
@@ -125,36 +105,26 @@ export const deleteGallery = async (id: string): Promise<void> => {
         }
 
         const fileUrl = rows[0].url;
+        const s3Key = extractS3Key(fileUrl);
 
-        // 2. 정확한 S3 Key 추출
-        let s3Key: string | null = null;
-        try {
-            const urlObj = new URL(fileUrl);
-            s3Key = urlObj.pathname.startsWith('/') ? urlObj.pathname.slice(1) : urlObj.pathname;
-        } catch (e) {
-            console.warn("Failed to parse S3 URL:", fileUrl, e);
-        }
-
-        // 3. S3 파일 삭제
         if (s3Key) {
             try {
+                console.log("Deleting S3 file:", s3Key);
                 await deleteFromStorage(s3Key);
             } catch (err) {
                 console.error("Failed to delete file from S3:", s3Key, err);
-                // 필요 시 throw 해서 롤백 가능
-                // throw err;
+                // 필요 시 throw err;
             }
         } else {
             console.warn("S3 key not found for URL:", fileUrl);
         }
 
-        // 4. DB에서 항목 삭제
         await conn.execute(`DELETE FROM ${TABLE_NAME} WHERE id = ?`, [id]);
         await conn.commit();
 
     } catch (err) {
         await conn.rollback();
-        console.error("deleteGallery transaction failed:", err);
+        console.error("deleteGalleryById transaction failed:", err);
         throw err;
     } finally {
         conn.release();
