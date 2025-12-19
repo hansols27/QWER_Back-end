@@ -3,13 +3,17 @@ os: linux
 files:
   - source: /
     destination: /root/QWER_Back-end
+    overwrite: yes # 중요: 기존 파일이 있으면 덮어씁니다.
+
 permissions:
-  - object: /
+  - object: /root/QWER_Back-end # 전체 루트(/) 대신 배포 경로만 지정하는 것이 안전합니다.
     pattern: "**"
     owner: root
     group: root
+
 hooks:
-  BeforeInstall:
+  # BeforeInstall보다는 ApplicationStop에서 이전 서버를 끄는 것이 일반적입니다.
+  ApplicationStop: 
     - location: scripts/stop_server.sh
       timeout: 60
       runas: root
@@ -17,10 +21,10 @@ hooks:
     - location: scripts/install_dependencies.sh
       timeout: 300
       runas: root
-    - location: scripts/daemon_reload.sh # <-- 추가: 서비스 파일 변경 후 필수
+    - location: scripts/daemon_reload.sh
       timeout: 30
       runas: root
   ApplicationStart:
-    - location: scripts/start_server.sh # 재시작 명령으로 변경
+    - location: scripts/start_server.sh
       timeout: 60
       runas: root
