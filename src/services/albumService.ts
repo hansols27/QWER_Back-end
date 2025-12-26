@@ -58,13 +58,15 @@ const toDatabaseDate = (isoString: string): string => {
 // ----------------------------------------------------
 
 /**
- * 전체 앨범 조회
- */
+ * 전체 앨범 조회
+ */
 export async function getAlbums(): Promise<AlbumItem[]> {
-    const [rows] = await pool.execute<AlbumRow[]>(
-        `SELECT id, title, date, image, description, videoUrl, tracks, createdAt FROM ${TABLE_NAME} ORDER BY date DESC`
-    );
-    return rows.map(mapRowToAlbumItem);
+    const [rows] = await pool.execute<AlbumRow[]>(
+        `SELECT \`id\`, \`title\`, \`date\`, \`image\`, \`description\`, \`videoUrl\`, \`tracks\`, \`createdAt\` 
+         FROM \`${TABLE_NAME}\` 
+         ORDER BY \`date\` DESC`
+    );
+    return rows.map(mapRowToAlbumItem);
 }
 
 /**
@@ -125,20 +127,20 @@ export async function createAlbum(
         const dbDate = data.date ? toDatabaseDate(data.date) : '';
         
         // 3. DB INSERT
-        await conn.execute<ResultSetHeader>(
-            `INSERT INTO ${TABLE_NAME} 
-             (id, title, date, description, tracks, videoUrl, image, createdAt) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-            [
-                newId, 
-                data.title, 
-                dbDate, // ⭐️ 변환된 날짜 사용
-                data.description || "", 
-                tracksJson, 
-                data.videoUrl || "", 
-                imageUrl
-            ]
-        );
+        await conn.execute<ResultSetHeader>(
+            `INSERT INTO \`${TABLE_NAME}\` 
+            (\`id\`, \`title\`, \`date\`, \`description\`, \`tracks\`, \`videoUrl\`, \`image\`, \`createdAt\`) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [
+                newId, 
+                data.title, 
+                dbDate, 
+                data.description || "", 
+                tracksJson, 
+                data.videoUrl || "", 
+                imageUrl
+            ]
+        );
 
         await conn.commit();
         
@@ -233,18 +235,19 @@ export async function updateAlbum(
         updateFields.image = imageUrl; // 최종 이미지 URL 포함
 
         // 4. MariaDB 업데이트
-        const setClauses = Object.keys(updateFields).map(key => `${key} = ?`).join(', ');
-        const values = Object.values(updateFields);
+        // key를 백틱으로 감싸서 예약어 충돌 방지
+        const setClauses = Object.keys(updateFields).map(key => `\`${key}\` = ?`).join(', ');
+        const values = Object.values(updateFields);
 
-        if (setClauses.length === 0) {
-            await conn.rollback();
-            return existingAlbum;
-        }
+        if (setClauses.length === 0) {
+            await conn.rollback();
+            return existingAlbum;
+        }
 
-        await conn.execute<ResultSetHeader>(
-            `UPDATE ${TABLE_NAME} SET ${setClauses} WHERE id = ?`,
-            [...values, id]
-        );
+        await conn.execute<ResultSetHeader>(
+            `UPDATE \`${TABLE_NAME}\` SET ${setClauses} WHERE \`id\` = ?`,
+            [...values, id]
+        );
         
         await conn.commit();
         
